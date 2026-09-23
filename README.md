@@ -1,92 +1,72 @@
-# Obsidian Sample Plugin
+Markdown
 
-This is a sample plugin for Obsidian (https://obsidian.md).
+# Mobile-SR
 
-This project uses TypeScript to provide type checking and documentation.
-The repo depends on the latest plugin API (obsidian.d.ts) in TypeScript Definition format, which contains TSDoc comments describing what it does.
+Spaced Repetition with mobile support
 
-This sample plugin demonstrates some of the basic functionality the plugin API can do.
+## How to Write Cards
 
-- Adds a ribbon icon, which shows a Notice when clicked.
-- Adds a command "Open modal (simple)" which opens a Modal.
-- Adds a plugin setting tab to the settings page.
-- Registers a global click event and outputs a Notice on click.
-- Registers a global interval which logs 'setInterval' to the console.
+The plugin automatically detects several card formats within your Markdown files:
 
-## First time developing plugins?
+1. Multi-line Question & Answer
+   Use a single question mark (`?`) for a standard single-direction card, or a double question mark (`??`) for a reversed card (tests both ways).
 
-Quick starting guide for new plugin devs:
+```markdown
+What is the capital of Japan?
+Hint: starts with T
+?
+Tokyo
 
-- Check if [someone already developed a plugin for what you want](https://obsidian.md/plugins)! There might be an existing plugin similar enough that you can partner up with.
-- Make a copy of this repo as a template with the "Use this template" button (login to GitHub if you don't see it).
-- Clone your repo to a local development folder. For convenience, you can place this folder in your `.obsidian/plugins/your-plugin-name` folder.
-- Install NodeJS, then run `npm i` in the command line under your repo folder.
-- Run `npm run dev` to compile your plugin from `src/main.ts` to `main.js`.
-- Make changes to `src/main.ts` (or create new `.ts` files). Those changes should be automatically compiled into `main.js`.
-- Reload Obsidian to load the new version of your plugin.
-- Enable plugin in settings window.
-- For updates to the Obsidian API run `npm update` in the command line under your repo folder.
+2. Single-line Cards
 
-## Releasing new releases
+    Unidirectional (::):
+    Markdown
 
-- Update your `manifest.json` with your new version number, such as `1.0.1`, and the minimum Obsidian version required for your latest release.
-- Update your `versions.json` file with `"new-plugin-version": "minimum-obsidian-version"` so older versions of Obsidian can download an older version of your plugin that's compatible.
-- Create new GitHub release using your new version number as the "Tag version". Use the exact version number, don't include a prefix `v`. See here for an example: https://github.com/obsidianmd/obsidian-sample-plugin/releases
-- Upload the files `manifest.json`, `main.js`, `styles.css` as binary attachments. Note: The manifest.json file must be in two places, first the root path of your repository and also in the release.
-- Publish the release.
+    Capital of Spain :: Madrid
 
-> You can simplify the version bump process by running `npm version patch`, `npm version minor` or `npm version major` after updating `minAppVersion` manually in `manifest.json`.
-> The command will bump version in `manifest.json` and `package.json`, and add the entry for the new version to `versions.json`
+    Bidirectional (:::): Automatically creates two flashcards (forward and reverse).
+    Markdown
 
-## Adding your plugin to the community plugin list
+    Water ::: H2O
 
-- Check the [plugin guidelines](https://docs.obsidian.md/Plugins/Releasing/Plugin+guidelines).
-- Publish an initial version.
-- Make sure you have a `README.md` file in the root of your repo.
-- Make a pull request at https://github.com/obsidianmd/obsidian-releases to add your plugin.
+3. Cloze Deletions
 
-## How to use
+Use double equal signs (==) around the word or phrase you want to hide:
+Markdown
 
-- Clone this repo.
-- Make sure your NodeJS is at least v18 (`node --version`).
-- `npm i` to install dependencies.
-- `npm run dev` to start compilation in watch mode.
+The central configuration file for Obsidian plugins is ==data.json==.
 
-## Manually installing the plugin
+⚠️ The Critical Importance of Empty Lines
 
-- Copy over `main.js`, `styles.css`, `manifest.json` to your vault `VaultFolder/.obsidian/plugins/your-plugin-id/`.
+For the plugin's parser to work seamlessly, you must maintain empty lines before and after cards, and especially between questions and answers or consecutive cards.
 
-## Improve code quality with eslint
+    Empty lines prevent the plugin from confusing an answer line with the next question.
 
-- [ESLint](https://eslint.org/) is a tool that analyzes your code to quickly find problems. You can run ESLint against your plugin to find common bugs and ways to improve your code.
-- This project already has eslint preconfigured, you can invoke a check by running`npm run lint`
-- Together with a custom eslint [plugin](https://github.com/obsidianmd/eslint-plugin) for Obsidan specific code guidelines.
-- A GitHub action is preconfigured to automatically lint every commit on all branches.
+    Tip: If you have an existing note with dense or cramped cards, you can use the built-in command:
 
-## Funding URL
+    Separate Cards with Spaces in Active Note
 
-You can include funding URLs where people who use your plugin can financially support it.
+    The plugin will scan the note and automatically add the necessary spacing between cards.
 
-The simple way is to set the `fundingUrl` field to your link in your `manifest.json` file:
+🔄 Dashboard & Deck Management
 
-```json
-{
-	"fundingUrl": "https://buymeacoffee.com"
-}
+Clicking the plugin's icon in the ribbon bar or running the command Open Spaced Repetition Dashboard opens the central management window:
+
+    Deck Selection: Displays all decks (Markdown file names) that have cards due for review (Due). Each deck has its own Start button to launch a focused review session for that specific deck only.
+
+    Automated Garbage Collection: Every time the dashboard opens, the plugin scans your vault. If any card stored in data.json has been deleted from your notes, the plugin automatically detects it and removes it from data.json, keeping your database clean.
+
+    Reviewed Cards Status Table: A central table displaying all the flashcards you've already studied, complete with live text search, calculated remaining time until the next review, and current intervals.
+
+⚙️ Plugin Settings Overview
+
+You can customize your learning experience in the plugin settings:
+
+    Algorithm: Choose between SM2 (the classic spaced repetition algorithm) and FSRS (a modern, science-based algorithm that adapts based on stability and difficulty).
+
+    Request Retention: The target retention rate over time (primarily relevant for the FSRS algorithm).
+
+    Maximum Interval: The maximum limit of days a card can reach between reviews.
+
+    Show Interval on Buttons: Option to display expected interval times (e.g., 10m, 3d, 2mo) directly on the rating buttons (Again, Hard, Good, Easy) during reviews.
 ```
-
-If you have multiple URLs, you can also do:
-
-```json
-{
-	"fundingUrl": {
-		"Buy Me a Coffee": "https://buymeacoffee.com",
-		"GitHub Sponsor": "https://github.com/sponsors",
-		"Patreon": "https://www.patreon.com/"
-	}
-}
-```
-
-## API Documentation
-
-See https://docs.obsidian.md
