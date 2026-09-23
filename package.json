@@ -1,7 +1,7 @@
 {
-	"name": "obsidian-sample-plugin",
+	"name": "Mobile-SR",
 	"version": "1.0.0",
-	"description": "This is a sample plugin for Obsidian (https://obsidian.md)",
+	"description": "Spaced repetition with mobile support",
 	"main": "main.js",
 	"type": "module",
 	"scripts": {
