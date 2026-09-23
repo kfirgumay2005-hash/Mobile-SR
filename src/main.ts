@@ -437,7 +437,7 @@ export class ReviewModal extends Modal {
 	onOpen(): void {
 		this.component.load();
 		this.modalEl.addClass('srs-review-modal-wrapper');
-		this.renderCurrentCard();
+		void this.renderCurrentCard();
 	}
 
 	onClose(): void {
@@ -450,7 +450,7 @@ export class ReviewModal extends Modal {
 		contentEl.empty();
 
 		if (this.currentIndex >= this.queue.length) {
-			contentEl.createEl('h2', { text: '🎉 Deck Completed!' });
+			contentEl.createEl('h2', { text: '脂 Deck Completed!' });
 			contentEl.createEl('p', {
 				text: 'You have reviewed all due flashcards in this session.',
 			});
@@ -468,10 +468,12 @@ export class ReviewModal extends Modal {
 		const cardMeta = this.plugin.store[card.id];
 
 		const headerEl = contentEl.createDiv({ cls: 'srs-header-bar' });
-		headerEl.style.display = 'flex';
-		headerEl.style.justifyContent = 'space-between';
-		headerEl.style.alignItems = 'center';
-		headerEl.style.marginBottom = '1em';
+		headerEl.setCssStyles({
+			display: 'flex',
+			justifyContent: 'space-between',
+			alignItems: 'center',
+			marginBottom: '1em',
+		});
 
 		headerEl.createSpan({
 			text: `Deck: ${card.deckName}`,
@@ -487,30 +489,31 @@ export class ReviewModal extends Modal {
 		});
 		editBtn.onclick = () => {
 			this.isEditing = !this.isEditing;
-			this.renderCurrentCard();
+			void this.renderCurrentCard();
 		};
 
 		const bodyEl = contentEl.createDiv({ cls: 'srs-card-body' });
-		bodyEl.style.minHeight = '150px';
-		bodyEl.style.padding = '1em';
-		bodyEl.style.border = '1px solid var(--background-modifier-border)';
-		bodyEl.style.borderRadius = '8px';
+		bodyEl.setCssStyles({
+			minHeight: '150px',
+			padding: '1em',
+			border: '1px solid var(--background-modifier-border)',
+			borderRadius: '8px',
+		});
 
 		if (this.isEditing) {
 			const editArea = bodyEl.createEl('textarea');
 			editArea.value = card.rawContent;
-			editArea.style.width = '100%';
-			editArea.style.height = '120px';
+			editArea.setCssStyles({ width: '100%', height: '120px' });
 
 			const saveBtn = bodyEl.createEl('button', {
 				text: 'Save Changes',
 				cls: 'mod-cta',
 			});
-			saveBtn.style.marginTop = '0.5em';
+			saveBtn.setCssStyles({ marginTop: '0.5em' });
 			saveBtn.onclick = async () => {
 				await this.saveCardModification(card, editArea.value);
 				this.isEditing = false;
-				this.renderCurrentCard();
+				void this.renderCurrentCard();
 			};
 			return;
 		}
@@ -537,23 +540,25 @@ export class ReviewModal extends Modal {
 		}
 
 		const bottomBar = contentEl.createDiv({ cls: 'srs-bottom-bar' });
-		bottomBar.style.marginTop = '1.5em';
+		bottomBar.setCssStyles({ marginTop: '1.5em' });
 
 		if (!this.isAnswerShown) {
 			const showBtn = bottomBar.createEl('button', {
 				text: 'Show Answer',
 				cls: 'mod-cta',
 			});
-			showBtn.style.width = '100%';
+			showBtn.setCssStyles({ width: '100%' });
 			showBtn.onclick = () => {
 				this.isAnswerShown = true;
-				this.renderCurrentCard();
+				void this.renderCurrentCard();
 			};
 		} else {
 			const buttonGrid = bottomBar.createDiv({ cls: 'srs-button-grid' });
-			buttonGrid.style.display = 'grid';
-			buttonGrid.style.gridTemplateColumns = 'repeat(4, 1fr)';
-			buttonGrid.style.gap = '8px';
+			buttonGrid.setCssStyles({
+				display: 'grid',
+				gridTemplateColumns: 'repeat(4, 1fr)',
+				gap: '8px',
+			});
 
 			const ratings: { label: string; rating: Rating; color: string }[] =
 				[
@@ -574,22 +579,28 @@ export class ReviewModal extends Modal {
 				);
 
 				const btn = buttonGrid.createEl('button');
-				btn.style.display = 'flex';
-				btn.style.flexDirection = 'column';
-				btn.style.alignItems = 'center';
+				btn.setCssStyles({
+					display: 'flex',
+					flexDirection: 'column',
+					alignItems: 'center',
+				});
 
 				const labelSpan = btn.createSpan({ text: item.label });
-				labelSpan.style.color = item.color;
-				labelSpan.style.fontWeight = 'bold';
+				labelSpan.setCssStyles({
+					color: item.color,
+					fontWeight: 'bold',
+				});
 
 				if (this.plugin.settings.showIntervalOnButtons) {
 					const intervalSpan = btn.createSpan({ text: intervalText });
-					intervalSpan.style.fontSize = '0.8em';
-					intervalSpan.style.opacity = '0.7';
+					intervalSpan.setCssStyles({
+						fontSize: '0.8em',
+						opacity: '0.7',
+					});
 				}
 
-				btn.onclick = async () => {
-					await this.applyRating(card, nextMeta);
+				btn.onclick = () => {
+					void this.applyRating(card, nextMeta);
 				};
 			}
 		}
@@ -604,7 +615,7 @@ export class ReviewModal extends Modal {
 		await this.plugin.saveStore();
 		this.currentIndex++;
 		this.isAnswerShown = false;
-		this.renderCurrentCard();
+		void this.renderCurrentCard();
 	}
 
 	private async saveCardModification(
@@ -639,15 +650,16 @@ export class DashboardModal extends Modal {
 		this.plugin = plugin;
 	}
 
-	async onOpen(): Promise<void> {
+	onOpen(): void {
 		this.modalEl.addClass('srs-dashboard-modal');
 		this.contentEl.empty();
 		this.contentEl.createEl('h2', {
-			text: '🔄 Scanning decks and cleaning data...',
+			text: '売 Scanning decks and cleaning data...',
 		});
 
-		await this.loadAndSyncCards();
-		this.render();
+		void this.loadAndSyncCards().then(() => {
+			this.render();
+		});
 	}
 
 	onClose(): void {
@@ -671,7 +683,6 @@ export class DashboardModal extends Modal {
 			}
 		}
 
-		// Garbage Collection: Delete store entries for cards that no longer exist
 		let storeChanged = false;
 		for (const storedId in this.plugin.store) {
 			if (!this.cardsMap.has(storedId)) {
@@ -682,9 +693,6 @@ export class DashboardModal extends Modal {
 
 		if (storeChanged) {
 			await this.plugin.saveStore();
-			console.log(
-				'Spaced Repetition: Cleaned up deleted cards from data.json',
-			);
 		}
 	}
 
@@ -693,7 +701,7 @@ export class DashboardModal extends Modal {
 		contentEl.empty();
 
 		// --- SECTION 1: DECKS TO REVIEW ---
-		contentEl.createEl('h2', { text: '📚 Decks to Review' });
+		contentEl.createEl('h2', { text: '答 Decks to Review' });
 
 		const now = Date.now();
 		const deckMap = new Map<string, Flashcard[]>();
@@ -710,34 +718,38 @@ export class DashboardModal extends Modal {
 
 		if (deckMap.size === 0) {
 			contentEl.createEl('p', {
-				text: '🎉 No cards are due right now! Great job.',
+				text: '脂 No cards are due right now! Great job.',
 			});
 		} else {
 			const decksContainer = contentEl.createDiv({
 				cls: 'srs-decks-container',
 			});
-			decksContainer.style.display = 'grid';
-			decksContainer.style.gridTemplateColumns =
-				'repeat(auto-fill, minmax(250px, 1fr))';
-			decksContainer.style.gap = '10px';
-			decksContainer.style.marginBottom = '2em';
+			decksContainer.setCssStyles({
+				display: 'grid',
+				gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))',
+				gap: '10px',
+				marginBottom: '2em',
+			});
 
 			for (const [deckName, dueCards] of deckMap.entries()) {
 				const deckCard = decksContainer.createDiv();
-				deckCard.style.border =
-					'1px solid var(--background-modifier-border)';
-				deckCard.style.padding = '12px';
-				deckCard.style.borderRadius = '8px';
-				deckCard.style.display = 'flex';
-				deckCard.style.justifyContent = 'space-between';
-				deckCard.style.alignItems = 'center';
+				deckCard.setCssStyles({
+					border: '1px solid var(--background-modifier-border)',
+					padding: '12px',
+					borderRadius: '8px',
+					display: 'flex',
+					justifyContent: 'space-between',
+					alignItems: 'center',
+				});
 
 				const infoDiv = deckCard.createDiv();
 				infoDiv.createEl('strong', { text: deckName });
-				infoDiv.createEl('div', {
-					text: `${dueCards.length} cards due`,
-					cls: 'srs-deck-count',
-				}).style.fontSize = '0.85em';
+				infoDiv
+					.createEl('div', {
+						text: `${dueCards.length} cards due`,
+						cls: 'srs-deck-count',
+					})
+					.setCssStyles({ fontSize: '0.85em' });
 
 				const startBtn = deckCard.createEl('button', {
 					text: 'Start',
@@ -753,7 +765,7 @@ export class DashboardModal extends Modal {
 		contentEl.createEl('hr');
 
 		// --- SECTION 2: REVIEWED CARDS STATUS ---
-		contentEl.createEl('h2', { text: '📊 Reviewed Flashcards Status' });
+		contentEl.createEl('h2', { text: '投 Reviewed Flashcards Status' });
 
 		const storeEntries = Object.values(this.plugin.store);
 
@@ -768,16 +780,17 @@ export class DashboardModal extends Modal {
 			type: 'text',
 			placeholder: 'Search reviewed cards by prompt or deck...',
 		});
-		searchInput.style.width = '100%';
-		searchInput.style.marginBottom = '1em';
-		searchInput.style.padding = '0.5em';
+		searchInput.setCssStyles({
+			width: '100%',
+			marginBottom: '1em',
+			padding: '0.5em',
+		});
 		searchInput.value = this.filterText;
 
 		const tableContainer = contentEl.createDiv({
 			cls: 'srs-table-container',
 		});
-		tableContainer.style.maxHeight = '400px';
-		tableContainer.style.overflowY = 'auto';
+		tableContainer.setCssStyles({ maxHeight: '400px', overflowY: 'auto' });
 
 		searchInput.oninput = (e) => {
 			this.filterText = (
@@ -817,18 +830,17 @@ export class DashboardModal extends Modal {
 		}
 
 		const table = container.createEl('table');
-		table.style.width = '100%';
-		table.style.borderCollapse = 'collapse';
+		table.setCssStyles({ width: '100%', borderCollapse: 'collapse' });
 
 		const thead = table.createEl('thead');
 		const headerRow = thead.createEl('tr');
-		headerRow.style.borderBottom =
-			'2px solid var(--background-modifier-border)';
+		headerRow.setCssStyles({
+			borderBottom: '2px solid var(--background-modifier-border)',
+		});
 
 		['Card Prompt', 'Deck', 'Interval', 'Status'].forEach((h) => {
 			const th = headerRow.createEl('th', { text: h });
-			th.style.padding = '8px';
-			th.style.textAlign = 'left';
+			th.setCssStyles({ padding: '8px', textAlign: 'left' });
 		});
 
 		const tbody = table.createEl('tbody');
@@ -837,11 +849,12 @@ export class DashboardModal extends Modal {
 		for (const meta of filteredEntries) {
 			const card = this.cardsMap.get(meta.cardId);
 			const row = tbody.createEl('tr');
-			row.style.borderBottom =
-				'1px solid var(--background-modifier-border)';
+			row.setCssStyles({
+				borderBottom: '1px solid var(--background-modifier-border)',
+			});
 
 			const tdPrompt = row.createEl('td');
-			tdPrompt.style.padding = '8px';
+			tdPrompt.setCssStyles({ padding: '8px' });
 			tdPrompt.textContent = card
 				? card.front.length > 45
 					? card.front.substring(0, 45) + '...'
@@ -849,25 +862,27 @@ export class DashboardModal extends Modal {
 				: 'Unknown (Deleted)';
 
 			const tdDeck = row.createEl('td');
-			tdDeck.style.padding = '8px';
+			tdDeck.setCssStyles({ padding: '8px' });
 			tdDeck.textContent = card ? card.deckName : 'Unknown';
 
 			const tdInterval = row.createEl('td');
-			tdInterval.style.padding = '8px';
+			tdInterval.setCssStyles({ padding: '8px' });
 			tdInterval.textContent = SRSEngine.formatInterval(meta.interval);
 
 			const tdStatus = row.createEl('td');
-			tdStatus.style.padding = '8px';
+			tdStatus.setCssStyles({ padding: '8px' });
 
 			const diffMs = meta.due - now;
 			if (diffMs <= 0) {
-				tdStatus.textContent = '⚡ Due Now';
-				tdStatus.style.color = 'var(--text-error)';
-				tdStatus.style.fontWeight = 'bold';
+				tdStatus.textContent = '笞｡ Due Now';
+				tdStatus.setCssStyles({
+					color: 'var(--text-error)',
+					fontWeight: 'bold',
+				});
 			} else {
 				const timeStr = this.formatTimeRemaining(diffMs);
-				tdStatus.textContent = `⏳ ${timeStr}`;
-				tdStatus.style.color = 'var(--text-success)';
+				tdStatus.textContent = `竢ｳ ${timeStr}`;
+				tdStatus.setCssStyles({ color: 'var(--text-success)' });
 			}
 		}
 	}
@@ -908,7 +923,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		this.addRibbonIcon(
 			'clipboard-check',
 			'Spaced Repetition Dashboard',
-			async () => {
+			() => {
 				new DashboardModal(this.app, this).open();
 			},
 		);
@@ -916,7 +931,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		this.addCommand({
 			id: 'open-srs-dashboard',
 			name: 'Open Spaced Repetition Dashboard',
-			callback: async () => {
+			callback: () => {
 				new DashboardModal(this.app, this).open();
 			},
 		});
@@ -941,11 +956,9 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	}
 
 	async loadSettings(): Promise<void> {
-		this.settings = Object.assign(
-			{},
-			DEFAULT_SETTINGS,
-			await this.loadData(),
-		);
+		const loadedData =
+			(await this.loadData()) as Partial<SpacedRepetitionSettings> | null;
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData || {});
 	}
 
 	async saveSettings(): Promise<void> {
@@ -953,14 +966,19 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	}
 
 	async loadStore(): Promise<void> {
-		const data = await this.loadData();
+		const data = (await this.loadData()) as {
+			store?: Record<string, CardSchedulingMetadata>;
+		} | null;
 		if (data && data.store) {
 			this.store = data.store;
 		}
 	}
 
 	async saveStore(): Promise<void> {
-		const currentData = (await this.loadData()) || {};
+		const currentData =
+			((await this.loadData()) as {
+				store?: Record<string, CardSchedulingMetadata>;
+			} | null) || {};
 		currentData.store = this.store;
 		await this.saveData(currentData);
 	}

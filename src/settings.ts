@@ -30,13 +30,18 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
+	// Satisfies the declarative settings warning for Obsidian 1.13.0+ users
+	getSettingDefinitions(): Record<string, unknown>[] {
+		return [];
+	}
+
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		containerEl.createEl('h2', {
-			text: 'Spaced Repetition Plugin Settings',
-		});
+		new Setting(containerEl)
+			.setName('Spaced Repetition Plugin Settings')
+			.setHeading();
 
 		new Setting(containerEl)
 			.setName('Scheduling Algorithm')
@@ -55,24 +60,51 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		containerEl.createEl('h3', {
-			text: 'What is FSRS and Target Request Retention?',
+		new Setting(containerEl)
+			.setName('What is FSRS and Target Request Retention?')
+			.setHeading();
+
+		const fsrsExplanation = containerEl.createDiv();
+		fsrsExplanation.setCssStyles({
+			marginBottom: '1.5em',
+			padding: '1em',
+			backgroundColor: 'var(--background-modifier-form-field)',
+			borderRadius: '8px',
 		});
-		const fsrsExplanation = containerEl.createEl('div');
-		fsrsExplanation.style.marginBottom = '1.5em';
-		fsrsExplanation.style.padding = '1em';
-		fsrsExplanation.style.backgroundColor =
-			'var(--background-modifier-form-field)';
-		fsrsExplanation.style.borderRadius = '8px';
-		fsrsExplanation.innerHTML = `
-			<p><b>FSRS (Free Spaced Repetition Scheduler)</b> is a modern, research-backed algorithm that accurately predicts when you are about to forget information. It learns your memory patterns and adjusts intervals precisely.</p>
-			<p><b>Target Request Retention:</b> This is the most crucial metric. It determines the probability that you will remember a card when it is due for review.
-			<ul>
-				<li><b>Default is 0.90 (90%)</b> - The algorithm schedules the card exactly when you have a 90% chance of remembering it.</li>
-				<li>Increasing to <b>0.95</b> means you will see cards more frequently (shorter intervals) to ensure you rarely forget.</li>
-				<li>Decreasing to <b>0.80</b> means you will see cards less often, saving time, but you might forget more cards. The sweet spot for efficiency is usually between 0.85 and 0.92.</li>
-			</ul></p>
-		`;
+
+		const p1 = fsrsExplanation.createEl('p');
+		p1.createEl('b', { text: 'FSRS (Free Spaced Repetition Scheduler)' });
+		p1.appendText(
+			' is a modern, research-backed algorithm that accurately predicts when you are about to forget information. It learns your memory patterns and adjusts intervals precisely.',
+		);
+
+		const p2 = fsrsExplanation.createEl('p');
+		p2.createEl('b', { text: 'Target Request Retention:' });
+		p2.appendText(
+			' This is the most crucial metric. It determines the probability that you will remember a card when it is due for review.',
+		);
+
+		const ul = fsrsExplanation.createEl('ul');
+
+		const li1 = ul.createEl('li');
+		li1.createEl('b', { text: 'Default is 0.90 (90%)' });
+		li1.appendText(
+			' - The algorithm schedules the card exactly when you have a 90% chance of remembering it.',
+		);
+
+		const li2 = ul.createEl('li');
+		li2.appendText('Increasing to ');
+		li2.createEl('b', { text: '0.95' });
+		li2.appendText(
+			' means you will see cards more frequently (shorter intervals) to ensure you rarely forget.',
+		);
+
+		const li3 = ul.createEl('li');
+		li3.appendText('Decreasing to ');
+		li3.createEl('b', { text: '0.80' });
+		li3.appendText(
+			' means you will see cards less often, saving time, but you might forget more cards. The sweet spot for efficiency is usually between 0.85 and 0.92.',
+		);
 
 		new Setting(containerEl)
 			.setName('Target Request Retention')
@@ -137,32 +169,33 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 			);
 
 		if (this.plugin.settings.algorithm === 'FSRS') {
-			containerEl.createEl('h3', {
-				text: 'FSRS Model Weights (Advanced)',
-			});
+			new Setting(containerEl)
+				.setName('FSRS Model Weights (Advanced)')
+				.setHeading();
+
 			containerEl.createEl('p', {
 				text: 'These 17 weights control the math behind your memory decay. It is highly recommended NOT to change these unless you have generated optimized weights from an external tracker (like Anki).',
 				cls: 'setting-item-description',
 			});
 
 			const weightDescriptions = [
-				"W0: Initial Stability (Again) - Higher value = longer initial wait after pressing 'Again'.",
-				"W1: Initial Stability (Hard) - Higher value = longer initial wait after pressing 'Hard'.",
-				"W2: Initial Stability (Good) - Higher value = longer initial wait after pressing 'Good'.",
-				"W3: Initial Stability (Easy) - Higher value = longer initial wait after pressing 'Easy'.",
-				'W4: Initial Difficulty - Higher value = new cards are treated as harder, so future intervals will grow slower.',
-				"W5: Difficulty Multiplier - Higher value = your very first rating (Good/Hard) alters the card's difficulty more drastically.",
-				"W6: Difficulty Drift - Higher value = the card's difficulty adapts faster based on your future ratings.",
-				'W7: Stability Tuning - Internal mathematical tuning parameter (leave default).',
-				'W8: Stability Increase Base - Higher value = intervals grow much faster after correct answers.',
-				'W9: Stability Decay - Higher value = intervals grow slower if the card is already highly stable.',
-				'W10: Retrievability Multiplier - Higher value = remembering a card you were just about to forget gives a massive interval boost.',
-				"W11: Lapse Stability Base - Higher value = you retain more stability (longer next interval) even after pressing 'Again'.",
-				'W12: Lapse Difficulty Penalty - Higher value = forgetting a card punishes its future interval growth more.',
-				'W13: Lapse Stability Decay - Higher value = highly stable cards lose a lot more stability when forgotten.',
-				'W14: Lapse Retrievability Multiplier - Higher value = forgetting a card long after its due date retains more stability.',
-				"W15: Hard Penalty - Higher value = punishes interval growth more heavily when you press 'Hard'.",
-				"W16: Easy Bonus - Higher value = rewards interval growth more heavily when you press 'Easy'.",
+				"W0: Initial Stability (Again) - Higher value = longer initial wait after pressing 'Again'. (Range: 0.1 - 40.0)",
+				"W1: Initial Stability (Hard) - Higher value = longer initial wait after pressing 'Hard'. (Range: 0.1 - 40.0)",
+				"W2: Initial Stability (Good) - Higher value = longer initial wait after pressing 'Good'. (Range: 0.1 - 40.0)",
+				"W3: Initial Stability (Easy) - Higher value = longer initial wait after pressing 'Easy'. (Range: 0.1 - 40.0)",
+				'W4: Initial Difficulty - Higher value = new cards are treated as harder, so future intervals will grow slower. (Range: 1.0 - 10.0)',
+				"W5: Difficulty Multiplier - Higher value = your very first rating (Good/Hard) alters the card's difficulty more drastically. (Range: 0.01 - 5.0)",
+				"W6: Difficulty Drift - Higher value = the card's difficulty adapts faster based on your future ratings. (Range: 0.01 - 5.0)",
+				'W7: Stability Tuning - Internal mathematical tuning parameter (leave default). (Range: 0.0 - 0.5)',
+				'W8: Stability Increase Base - Higher value = intervals grow much faster after correct answers. (Range: 0.0 - 3.0)',
+				'W9: Stability Decay - Higher value = intervals grow slower if the card is already highly stable. (Range: 0.0 - 1.0)',
+				'W10: Retrievability Multiplier - Higher value = remembering a card you were just about to forget gives a massive interval boost. (Range: 0.01 - 2.0)',
+				"W11: Lapse Stability Base - Higher value = you retain more stability (longer next interval) even after pressing 'Again'. (Range: 0.01 - 5.0)",
+				'W12: Lapse Difficulty Penalty - Higher value = forgetting a card punishes its future interval growth more. (Range: 0.01 - 0.5)',
+				'W13: Lapse Stability Decay - Higher value = highly stable cards lose a lot more stability when forgotten. (Range: 0.01 - 1.0)',
+				'W14: Lapse Retrievability Multiplier - Higher value = forgetting a card long after its due date retains more stability. (Range: 0.01 - 4.0)',
+				"W15: Hard Penalty - Higher value = punishes interval growth more heavily when you press 'Hard'. (Range: 0.0 - 1.0)",
+				"W16: Easy Bonus - Higher value = rewards interval growth more heavily when you press 'Easy'. (Range: 1.0 - 4.0)",
 			];
 
 			weightDescriptions.forEach((desc, index) => {
