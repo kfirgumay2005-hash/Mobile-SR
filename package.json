@@ -1,6 +1,6 @@
 {
 	"name": "Mobile-SR",
-	"version": "1.0.5",
+	"version": "1.0.6",
 	"description": "Spaced repetition with mobile support",
 	"main": "main.js",
 	"type": "module",
