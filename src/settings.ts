@@ -39,9 +39,7 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		containerEl.empty();
 
-		new Setting(containerEl)
-			.setName('Spaced Repetition Plugin Settings')
-			.setHeading();
+		new Setting(containerEl).setName('Mobile-SR').setHeading();
 
 		new Setting(containerEl)
 			.setName('Scheduling Algorithm')
