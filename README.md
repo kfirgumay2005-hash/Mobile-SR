@@ -11,7 +11,6 @@ The plugin automatically detects several card formats within your Markdown files
 1. Multi-line Question & Answer
    Use a single question mark (`?`) for a standard single-direction card, or a double question mark (`??`) for a reversed card (tests both ways).
 
-```markdown
 What is the capital of Japan?
 Hint: starts with T
 ?
@@ -69,4 +68,3 @@ You can customize your learning experience in the plugin settings:
     Maximum Interval: The maximum limit of days a card can reach between reviews.
 
     Show Interval on Buttons: Option to display expected interval times (e.g., 10m, 3d, 2mo) directly on the rating buttons (Again, Hard, Good, Easy) during reviews.
-```

@@ -1,7 +1,7 @@
 {
 	"id": "mobilesr",
 	"name": "Mobile-SR",
-	"version": "1.0.0",
+	"version": "1.0.1",
 	"minAppVersion": "1.4.0",
 	"description": "Spaced repetition with mobile support",
 	"author": "KfirG",
