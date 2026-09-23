@@ -701,7 +701,7 @@ export class DashboardModal extends Modal {
 		contentEl.empty();
 
 		// --- SECTION 1: DECKS TO REVIEW ---
-		contentEl.createEl('h2', { text: '答 Decks to Review' });
+		contentEl.createEl('h2', { text: 'Decks to Review' });
 
 		const now = Date.now();
 		const deckMap = new Map<string, Flashcard[]>();
@@ -764,7 +764,7 @@ export class DashboardModal extends Modal {
 		contentEl.createEl('hr');
 
 		// --- SECTION 2: REVIEWED CARDS STATUS ---
-		contentEl.createEl('h2', { text: '投 Reviewed Flashcards Status' });
+		contentEl.createEl('h2', { text: 'Reviewed Flashcards Status' });
 
 		const storeEntries = Object.values(this.plugin.store);
 
