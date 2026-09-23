@@ -13,6 +13,12 @@ import {
 	SpacedRepetitionSettingTab,
 } from './settings';
 
+// פונקציית עזר לניקוי רווחים ותווי כיווניות (BiDi) שמוסתרים בטקסטים בעברית
+export const cleanStr = (s: string | undefined): string => {
+	if (s === undefined) return '';
+	return s.replace(/[\u200B-\u200F\u202A-\u202E]/g, '').trim();
+};
+
 // ============================================================================
 // 1. Types & Interfaces
 // ============================================================================
@@ -232,7 +238,7 @@ export class FlashcardParser {
 
 		const isCardDelimiter = (line: string | undefined): boolean => {
 			if (line === undefined) return false;
-			const t = line.trim();
+			const t = cleanStr(line);
 			return (
 				t === '?' || t === '??' || t.includes('::') || t.includes(':::')
 			);
@@ -242,7 +248,7 @@ export class FlashcardParser {
 			const line = lines[i];
 			if (line === undefined) continue;
 
-			if (line.includes(':::') && !line.startsWith('//')) {
+			if (line.includes(':::') && !cleanStr(line).startsWith('//')) {
 				const parts = line.split(':::');
 				if (
 					parts.length === 2 &&
@@ -285,7 +291,7 @@ export class FlashcardParser {
 				}
 			}
 
-			if (line.includes('::') && !line.startsWith('//')) {
+			if (line.includes('::') && !cleanStr(line).startsWith('//')) {
 				const parts = line.split('::');
 				if (
 					parts.length === 2 &&
@@ -312,7 +318,7 @@ export class FlashcardParser {
 				}
 			}
 
-			if (line.includes('==') && !line.startsWith('//')) {
+			if (line.includes('==') && !cleanStr(line).startsWith('//')) {
 				const clozeRegex = /==(.*?)==/g;
 				let match: RegExpExecArray | null;
 				while ((match = clozeRegex.exec(line)) !== null) {
@@ -335,13 +341,13 @@ export class FlashcardParser {
 				}
 			}
 
-			if (line.trim() === '?' || line.trim() === '??') {
-				const isReversed = line.trim() === '??';
+			if (cleanStr(line) === '?' || cleanStr(line) === '??') {
+				const isReversed = cleanStr(line) === '??';
 				let qStart = i - 1;
 
 				while (
 					qStart >= 0 &&
-					lines[qStart]?.trim() !== '' &&
+					cleanStr(lines[qStart]) !== '' &&
 					!isCardDelimiter(lines[qStart])
 				) {
 					qStart--;
@@ -351,7 +357,7 @@ export class FlashcardParser {
 				let aEnd = i + 1;
 				while (
 					aEnd < lines.length &&
-					lines[aEnd]?.trim() !== '' &&
+					cleanStr(lines[aEnd]) !== '' &&
 					!isCardDelimiter(lines[aEnd])
 				) {
 					aEnd++;
@@ -450,7 +456,7 @@ export class ReviewModal extends Modal {
 		contentEl.empty();
 
 		if (this.currentIndex >= this.queue.length) {
-			contentEl.createEl('h2', { text: '脂 Deck Completed!' });
+			contentEl.createEl('h2', { text: '✨ Deck Completed!' });
 			contentEl.createEl('p', {
 				text: 'You have reviewed all due flashcards in this session.',
 			});
@@ -654,7 +660,7 @@ export class DashboardModal extends Modal {
 		this.modalEl.addClass('srs-dashboard-modal');
 		this.contentEl.empty();
 		this.contentEl.createEl('h2', {
-			text: '売 Scanning decks and cleaning data...',
+			text: '🔍 Scanning decks and cleaning data...',
 		});
 
 		void this.loadAndSyncCards().then(() => {
@@ -718,7 +724,7 @@ export class DashboardModal extends Modal {
 
 		if (deckMap.size === 0) {
 			contentEl.createEl('p', {
-				text: '脂 No cards are due right now! Great job.',
+				text: '🎉 No cards are due right now! Great job.',
 			});
 		} else {
 			const decksContainer = contentEl.createDiv({
@@ -873,14 +879,14 @@ export class DashboardModal extends Modal {
 
 			const diffMs = meta.due - now;
 			if (diffMs <= 0) {
-				tdStatus.textContent = '笞｡ Due Now';
+				tdStatus.textContent = '⏰ Due Now';
 				tdStatus.setCssStyles({
 					color: 'var(--text-error)',
 					fontWeight: 'bold',
 				});
 			} else {
 				const timeStr = this.formatTimeRemaining(diffMs);
-				tdStatus.textContent = `竢ｳ ${timeStr}`;
+				tdStatus.textContent = `⏳ ${timeStr}`;
 				tdStatus.setCssStyles({ color: 'var(--text-success)' });
 			}
 		}
@@ -935,19 +941,12 @@ export default class SpacedRepetitionPlugin extends Plugin {
 			},
 		});
 
+		// פקודה אולטימטיבית מאוחדת
 		this.addCommand({
-			id: 'separate-cards-active-note',
-			name: 'Separate Cards with Spaces in Active Note',
+			id: 'fix-cards-and-remove-duplicates',
+			name: 'Fix Cards Spacing and Remove Duplicates',
 			callback: async () => {
-				await this.separateCardsInActiveNote();
-			},
-		});
-
-		this.addCommand({
-			id: 'remove-duplicates-active-note',
-			name: 'Remove Duplicate Cards in Active Note',
-			callback: async () => {
-				await this.removeDuplicatesInActiveNote();
+				await this.fixCardsAndRemoveDuplicates();
 			},
 		});
 
@@ -982,7 +981,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		await this.saveData(currentData);
 	}
 
-	async separateCardsInActiveNote(): Promise<void> {
+	async fixCardsAndRemoveDuplicates(): Promise<void> {
 		const file = this.app.workspace.getActiveFile();
 		if (!file) {
 			new Notice('No active markdown file found.');
@@ -991,51 +990,90 @@ export default class SpacedRepetitionPlugin extends Plugin {
 
 		const content = await this.app.vault.read(file);
 		const lines = content.split('\n');
-		const newLines: string[] = [];
-
-		let inAnswer = false;
-		let lastDelimiterIndex = -1;
 
 		const isCardDelimiter = (l: string | undefined): boolean => {
-			if (!l) return false;
-			const t = l.trim();
+			if (l === undefined) return false;
+			const t = cleanStr(l);
 			return (
 				t === '?' || t === '??' || t.includes('::') || t.includes(':::')
 			);
 		};
 
-		for (let i = 0; i < lines.length; i++) {
+		// --- Phase 1: תיקון מרווחים (שאיבת רווחים מסביב לסימן השאלה) ---
+		let fixedLines: string[] = [];
+		let i = 0;
+		while (i < lines.length) {
 			const line = lines[i];
+			if (line === undefined) {
+				i++;
+				continue;
+			}
+			const cl = cleanStr(line);
+
+			if (cl === '?' || cl === '??') {
+				// מחיקת שורות ריקות לפני סימן השאלה
+				while (
+					fixedLines.length > 0 &&
+					cleanStr(fixedLines[fixedLines.length - 1]) === ''
+				) {
+					fixedLines.pop();
+				}
+				fixedLines.push(line);
+
+				// דילוג על שורות ריקות אחרי סימן השאלה
+				let j = i + 1;
+				while (j < lines.length && cleanStr(lines[j]) === '') {
+					j++;
+				}
+				i = j - 1;
+			} else {
+				fixedLines.push(line);
+			}
+			i++;
+		}
+
+		// --- Phase 2: הבטחת רווח יחיד בין כרטיסיות ---
+		let separatedLines: string[] = [];
+		let inAnswer = false;
+		let lastDelimiterIndex = -1;
+
+		for (let k = 0; k < fixedLines.length; k++) {
+			const line = fixedLines[k];
 			if (line === undefined) continue;
+			const cl = cleanStr(line);
 
-			const trimmed = line.trim();
-
-			if (i > 0 && (line.includes('::') || line.includes(':::'))) {
-				const prev = lines[i - 1];
-				if (prev !== undefined) {
-					const prevTrimmed = prev.trim();
-					if (
-						prevTrimmed !== '' &&
-						!prevTrimmed.startsWith('//') &&
-						!inAnswer
-					) {
-						newLines.push('');
-					}
+			if (
+				k > 0 &&
+				(cl.includes('::') || cl.includes(':::')) &&
+				!cl.startsWith('//')
+			) {
+				const prev = fixedLines[k - 1];
+				if (
+					prev !== undefined &&
+					cleanStr(prev) !== '' &&
+					!cleanStr(prev).startsWith('//') &&
+					!inAnswer
+				) {
+					separatedLines.push('');
 				}
 			}
 
-			if (inAnswer && i > lastDelimiterIndex + 1) {
-				if (trimmed === '') {
+			if (inAnswer && k > lastDelimiterIndex + 1) {
+				if (cl === '') {
 					inAnswer = false;
 				} else if (isCardDelimiter(line)) {
-					newLines.push('');
+					separatedLines.push('');
 					inAnswer = false;
 				} else {
 					let isNewQuestion = false;
-					for (let j = i + 1; j < lines.length && j <= i + 4; j++) {
-						const lookAheadLine = lines[j];
+					for (
+						let j = k + 1;
+						j < fixedLines.length && j <= k + 4;
+						j++
+					) {
+						const lookAheadLine = fixedLines[j];
 						if (lookAheadLine === undefined) break;
-						const lookAheadTrim = lookAheadLine.trim();
+						const lookAheadTrim = cleanStr(lookAheadLine);
 						if (lookAheadTrim === '') break;
 						if (lookAheadTrim === '?' || lookAheadTrim === '??') {
 							isNewQuestion = true;
@@ -1043,55 +1081,46 @@ export default class SpacedRepetitionPlugin extends Plugin {
 						}
 					}
 					if (isNewQuestion) {
-						newLines.push('');
+						separatedLines.push('');
 						inAnswer = false;
 					}
 				}
 			}
 
-			newLines.push(line);
+			separatedLines.push(line);
 
-			if (trimmed === '?' || trimmed === '??') {
+			if (cl === '?' || cl === '??') {
 				inAnswer = true;
-				lastDelimiterIndex = i;
+				lastDelimiterIndex = separatedLines.length - 1;
 			}
 		}
 
-		const newContent = newLines.join('\n');
-		if (newContent !== content) {
-			await this.app.vault.modify(file, newContent);
-			new Notice('Successfully added empty spaces between cards!');
-		} else {
-			new Notice('No missing spaces found between cards.');
-		}
-	}
+		// שמירה של הפורמט המתוקן לפני הסריקה לכפילויות כדי שהפרסר יזהה הכל
+		const formattedContent = separatedLines.join('\n');
+		await this.app.vault.modify(file, formattedContent);
 
-	async removeDuplicatesInActiveNote(): Promise<void> {
-		const file = this.app.workspace.getActiveFile();
-		if (!file) {
-			new Notice('No active markdown file found.');
-			return;
-		}
-
+		// --- Phase 3: הסרת כפילויות ---
 		const cards = await FlashcardParser.parseFile(
 			file,
 			this.app,
 			this.settings.flashcardTags,
 		);
 		if (cards.length === 0) {
-			new Notice('No flashcards found in active note.');
+			new Notice(
+				'Cards formatting fixed. No flashcards found for duplicate removal.',
+			);
 			return;
 		}
 
-		const content = await this.app.vault.read(file);
-		const lines = content.split('\n');
+		const latestContent = await this.app.vault.read(file);
+		const latestLines = latestContent.split('\n');
 
 		const seenCardKeys = new Set<string>();
 		const lineIndicesToRemove = new Set<number>();
 		let duplicatesCount = 0;
 
 		for (const card of cards) {
-			const key = card.front.trim().toLowerCase();
+			const key = cleanStr(card.front).toLowerCase();
 			if (seenCardKeys.has(key)) {
 				let isNewBlock = false;
 				for (let l = card.lineStart; l <= card.lineEnd; l++) {
@@ -1107,25 +1136,26 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		}
 
 		if (duplicatesCount === 0) {
-			new Notice('No duplicate cards found in active note.');
+			new Notice('Cards fixed and formatted! No duplicates found.');
 			return;
 		}
 
-		const newLines = lines.filter(
+		// --- Phase 4: ניקוי שורות ריקות מיותרות שנוצרו עקב מחיקת כפילויות ---
+		const finalLines = latestLines.filter(
 			(_, idx) => !lineIndicesToRemove.has(idx),
 		);
 		const cleanedLines: string[] = [];
 
-		for (let i = 0; i < newLines.length; i++) {
-			const currLine = newLines[i];
+		for (let m = 0; m < finalLines.length; m++) {
+			const currLine = finalLines[m];
 			if (currLine === undefined) continue;
 
-			if (i > 0) {
-				const prevLine = newLines[i - 1];
+			if (m > 0) {
+				const prevLine = finalLines[m - 1];
 				if (
 					prevLine !== undefined &&
-					currLine.trim() === '' &&
-					prevLine.trim() === ''
+					cleanStr(currLine) === '' &&
+					cleanStr(prevLine) === ''
 				) {
 					continue;
 				}
@@ -1135,7 +1165,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 
 		await this.app.vault.modify(file, cleanedLines.join('\n'));
 		new Notice(
-			`Removed ${duplicatesCount} duplicate card(s) from active note.`,
+			`Fixed formatting and removed ${duplicatesCount} duplicate card(s).`,
 		);
 	}
 }
