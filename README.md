@@ -6,44 +6,31 @@ Spaced Repetition with mobile support
 
 The plugin automatically detects several card formats within your Markdown files:
 
-1. Multi-line Question & Answer
-   Use a single question mark (`?`) for a standard single-direction card, or a double question mark (`??`) for a reversed card (tests both ways).
+Add #flashcards at the top of the card.
+
+Define cards this way:
 
 What is the capital of Japan?
 Hint: starts with T
 ?
 Tokyo
 
-2. Single-line Cards
+Trump is the president of...?
+Hint: starts with U
+?
+United States of America
 
-    Unidirectional (::):
-    Markdown
+and so on...
 
-    Capital of Spain :: Madrid
-
-    Bidirectional (:::): Automatically creates two flashcards (forward and reverse).
-    Markdown
-
-    Water ::: H2O
-
-3. Cloze Deletions
-
-Use double equal signs (==) around the word or phrase you want to hide:
-Markdown
-
-The central configuration file for Obsidian plugins is ==data.json==.
+(you can also add images)
 
 ⚠️ The Critical Importance of Empty Lines
 
-For the plugin's parser to work seamlessly, you must maintain empty lines before and after cards, and especially between questions and answers or consecutive cards.
-
-    Empty lines prevent the plugin from confusing an answer line with the next question.
-
-    Tip: If you have an existing note with dense or cramped cards, you can use the built-in command:
-
-    Separate Cards with Spaces in Active Note
-
-    The plugin will scan the note and automatically add the necessary spacing between cards.
+For the plugin to work you must maintain empty lines before and after cards just as described above.
+You can easily use the built-in command if you copy it from Quizlet,gemini , etc:
+Mobile-SR: Fix Cards Spacing and Remove Duplicates
+If you copy from quizlet then paste in gemini and ask to put the question mark between the word and it's meaning , then you can paste the output to
+the note and do the fix command and it will fix the empty spaces and remove any duplicates if were any within the set you copied.
 
 🔄 Dashboard & Deck Management
 
@@ -59,10 +46,12 @@ Clicking the plugin's icon in the ribbon bar or running the command Open Spaced 
 
 You can customize your learning experience in the plugin settings:
 
-    Algorithm: Choose between SM2 (the classic spaced repetition algorithm) and FSRS (a modern, science-based algorithm that adapts based on stability and difficulty).
+    Algorithm: It was mainly built around FSRS so i recommend to stick with it.
 
     Request Retention: The target retention rate over time (primarily relevant for the FSRS algorithm).
 
     Maximum Interval: The maximum limit of days a card can reach between reviews.
 
     Show Interval on Buttons: Option to display expected interval times (e.g., 10m, 3d, 2mo) directly on the rating buttons (Again, Hard, Good, Easy) during reviews.
+
+I would also like to recommend my other plugin Mobile-Translate which uses an output builder which lets you create new cards with the press of a button if configured correctly.
