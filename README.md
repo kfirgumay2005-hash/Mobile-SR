@@ -10,27 +10,27 @@ Add #flashcards at the top of the card.
 
 Define cards this way:
 
+(-)
 What is the capital of Japan?
 Hint: starts with T
 ?
 Tokyo
-
+(-)
 Trump is the president of...?
 Hint: starts with U
 ?
 United States of America
+(-)
 
 and so on...
 
 (you can also add images)
 
-⚠️ The Critical Importance of Empty Lines
+⚠️ The Critical Importance of Hyphens (-)
 
-For the plugin to work you must maintain empty lines before and after cards just as described above.
-You can easily use the built-in command if you copy it from Quizlet,gemini , etc:
+For the plugin to work you must maintain hyphens before and after cards just as described above , without the ().
+If you want to export someone else's deck from quizlet for example then paste into an AI and ask to put the question mark between the word and it's meaning and also to add the hyphens and send it to you as Plaintext , then you can paste the output to the markdown and perform this command to clean your deck from extra spaces and duplicates:
 Mobile-SR: Fix Cards Spacing and Remove Duplicates
-If you copy from quizlet then paste in gemini and ask to put the question mark between the word and it's meaning , then you can paste the output to
-the note and do the fix command and it will fix the empty spaces and remove any duplicates if were any within the set you copied.
 
 🔄 Dashboard & Deck Management
 

@@ -240,7 +240,11 @@ export class FlashcardParser {
 			if (line === undefined) return false;
 			const t = cleanStr(line);
 			return (
-				t === '?' || t === '??' || t.includes('::') || t.includes(':::')
+				t === '?' ||
+				t === '??' ||
+				t === '-' || // מקף כעת נחשב לגבול כרטיס רשמי
+				t.includes('::') ||
+				t.includes(':::')
 			);
 		};
 
@@ -343,28 +347,30 @@ export class FlashcardParser {
 
 			if (cleanStr(line) === '?' || cleanStr(line) === '??') {
 				const isReversed = cleanStr(line) === '??';
-				let qStart = i - 1;
 
+				// סורק למעלה עד למקף (מדלג על שורות ריקות בדרך)
+				let qStart = i - 1;
 				while (
 					qStart >= 0 &&
-					cleanStr(lines[qStart]) !== '' &&
+					cleanStr(lines[qStart]) !== '-' &&
 					!isCardDelimiter(lines[qStart])
 				) {
 					qStart--;
 				}
-				qStart++;
+				qStart++; // השורה שאחרי המקף
 
+				// סורק למטה עד למקף (מדלג על שורות ריקות בדרך)
 				let aEnd = i + 1;
 				while (
 					aEnd < lines.length &&
-					cleanStr(lines[aEnd]) !== '' &&
+					cleanStr(lines[aEnd]) !== '-' &&
 					!isCardDelimiter(lines[aEnd])
 				) {
 					aEnd++;
 				}
-				aEnd--;
+				aEnd--; // השורה שלפני המקף הבא
 
-				if (qStart < i && aEnd > i) {
+				if (qStart <= i && aEnd >= i) {
 					const qText = lines.slice(qStart, i).join('\n').trim();
 					const aText = lines
 						.slice(i + 1, aEnd + 1)
@@ -598,7 +604,9 @@ export class ReviewModal extends Modal {
 				});
 
 				if (this.plugin.settings.showIntervalOnButtons) {
-					const intervalSpan = btn.createSpan({ text: intervalText });
+					const intervalSpan = btn.createSpan({
+						text: intervalText,
+					});
 					intervalSpan.setCssStyles({
 						fontSize: '0.8em',
 						opacity: '0.7',
@@ -941,7 +949,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 			},
 		});
 
-		// פקודה אולטימטיבית מאוחדת
+		// פקודה אולטימטיבית לסידור הכרטיסיות ומחיקת כפילויות – מבוסס מקפים (-) בלבד
 		this.addCommand({
 			id: 'fix-cards-and-remove-duplicates',
 			name: 'Fix Cards Spacing and Remove Duplicates',
@@ -991,181 +999,119 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		const content = await this.app.vault.read(file);
 		const lines = content.split('\n');
 
-		const isCardDelimiter = (l: string | undefined): boolean => {
-			if (l === undefined) return false;
-			const t = cleanStr(l);
-			return (
-				t === '?' || t === '??' || t.includes('::') || t.includes(':::')
-			);
-		};
+		// חלוקת הקובץ לקבוצות של שורות על פי המקפים ("-")
+		// חלוקת הקובץ לקבוצות של שורות על פי המקפים ("-")
+		const dashGroups: string[][] = [];
+		let currentGroup: string[] = [];
 
-		// --- Phase 1: תיקון מרווחים (שאיבת רווחים מסביב לסימן השאלה) ---
-		let fixedLines: string[] = [];
-		let i = 0;
-		while (i < lines.length) {
+		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
-			if (line === undefined) {
-				i++;
-				continue;
-			}
-			const cl = cleanStr(line);
 
-			if (cl === '?' || cl === '??') {
-				// מחיקת שורות ריקות לפני סימן השאלה
-				while (
-					fixedLines.length > 0 &&
-					cleanStr(fixedLines[fixedLines.length - 1]) === ''
-				) {
-					fixedLines.pop();
-				}
-				fixedLines.push(line);
-
-				// דילוג על שורות ריקות אחרי סימן השאלה
-				let j = i + 1;
-				while (j < lines.length && cleanStr(lines[j]) === '') {
-					j++;
-				}
-				i = j - 1;
-			} else {
-				fixedLines.push(line);
-			}
-			i++;
-		}
-
-		// --- Phase 2: הבטחת רווח יחיד בין כרטיסיות ---
-		let separatedLines: string[] = [];
-		let inAnswer = false;
-		let lastDelimiterIndex = -1;
-
-		for (let k = 0; k < fixedLines.length; k++) {
-			const line = fixedLines[k];
+			// מוודא שהשורה מוגדרת כדי לרצות את TypeScript
 			if (line === undefined) continue;
-			const cl = cleanStr(line);
 
-			if (
-				k > 0 &&
-				(cl.includes('::') || cl.includes(':::')) &&
-				!cl.startsWith('//')
-			) {
-				const prev = fixedLines[k - 1];
-				if (
-					prev !== undefined &&
-					cleanStr(prev) !== '' &&
-					!cleanStr(prev).startsWith('//') &&
-					!inAnswer
-				) {
-					separatedLines.push('');
-				}
-			}
-
-			if (inAnswer && k > lastDelimiterIndex + 1) {
-				if (cl === '') {
-					inAnswer = false;
-				} else if (isCardDelimiter(line)) {
-					separatedLines.push('');
-					inAnswer = false;
-				} else {
-					let isNewQuestion = false;
-					for (
-						let j = k + 1;
-						j < fixedLines.length && j <= k + 4;
-						j++
-					) {
-						const lookAheadLine = fixedLines[j];
-						if (lookAheadLine === undefined) break;
-						const lookAheadTrim = cleanStr(lookAheadLine);
-						if (lookAheadTrim === '') break;
-						if (lookAheadTrim === '?' || lookAheadTrim === '??') {
-							isNewQuestion = true;
-							break;
-						}
-					}
-					if (isNewQuestion) {
-						separatedLines.push('');
-						inAnswer = false;
-					}
-				}
-			}
-
-			separatedLines.push(line);
-
-			if (cl === '?' || cl === '??') {
-				inAnswer = true;
-				lastDelimiterIndex = separatedLines.length - 1;
-			}
-		}
-
-		// שמירה של הפורמט המתוקן לפני הסריקה לכפילויות כדי שהפרסר יזהה הכל
-		const formattedContent = separatedLines.join('\n');
-		await this.app.vault.modify(file, formattedContent);
-
-		// --- Phase 3: הסרת כפילויות ---
-		const cards = await FlashcardParser.parseFile(
-			file,
-			this.app,
-			this.settings.flashcardTags,
-		);
-		if (cards.length === 0) {
-			new Notice(
-				'Cards formatting fixed. No flashcards found for duplicate removal.',
-			);
-			return;
-		}
-
-		const latestContent = await this.app.vault.read(file);
-		const latestLines = latestContent.split('\n');
-
-		const seenCardKeys = new Set<string>();
-		const lineIndicesToRemove = new Set<number>();
-		let duplicatesCount = 0;
-
-		for (const card of cards) {
-			const key = cleanStr(card.front).toLowerCase();
-			if (seenCardKeys.has(key)) {
-				let isNewBlock = false;
-				for (let l = card.lineStart; l <= card.lineEnd; l++) {
-					if (!lineIndicesToRemove.has(l)) {
-						lineIndicesToRemove.add(l);
-						isNewBlock = true;
-					}
-				}
-				if (isNewBlock) duplicatesCount++;
+			if (cleanStr(line) === '-') {
+				dashGroups.push(currentGroup);
+				currentGroup = [];
 			} else {
-				seenCardKeys.add(key);
+				currentGroup.push(line);
 			}
 		}
+		dashGroups.push(currentGroup);
 
-		if (duplicatesCount === 0) {
-			new Notice('Cards fixed and formatted! No duplicates found.');
-			return;
-		}
+		const seenKeys = new Set<string>();
+		let duplicatesCount = 0;
+		const outLines: string[] = [];
 
-		// --- Phase 4: ניקוי שורות ריקות מיותרות שנוצרו עקב מחיקת כפילויות ---
-		const finalLines = latestLines.filter(
-			(_, idx) => !lineIndicesToRemove.has(idx),
-		);
-		const cleanedLines: string[] = [];
+		for (let i = 0; i < dashGroups.length; i++) {
+			const group = dashGroups[i];
+			if (!group) continue;
 
-		for (let m = 0; m < finalLines.length; m++) {
-			const currLine = finalLines[m];
-			if (currLine === undefined) continue;
+			let delimiter = '';
+			let delimiterIdx = -1;
+			let isInline = false;
 
-			if (m > 0) {
-				const prevLine = finalLines[m - 1];
-				if (
-					prevLine !== undefined &&
-					cleanStr(currLine) === '' &&
-					cleanStr(prevLine) === ''
-				) {
+			// זיהוי אם הבלוק הזה מכיל כרטיס (מחפשים שאלה '?' או '::')
+			for (let j = 0; j < group.length; j++) {
+				const trimmed = cleanStr(group[j]);
+				if (trimmed === '?' || trimmed === '??') {
+					delimiter = group[j]!.trim();
+					delimiterIdx = j;
+					break;
+				}
+				if (trimmed.includes('::') && !trimmed.startsWith('//')) {
+					delimiter = group[j]!.trim();
+					delimiterIdx = j;
+					isInline = true;
+					break;
+				}
+			}
+
+			if (delimiterIdx !== -1) {
+				// זיהינו כרטיס בתוך גבולות המקפים
+				const frontLines = group.slice(0, delimiterIdx);
+				const backLines = group.slice(delimiterIdx + 1);
+
+				let rawKey = '';
+				if (!isInline) {
+					rawKey = cleanStr(frontLines.join(' ')).toLowerCase();
+				} else {
+					const delimLine = group[delimiterIdx] || '';
+					const parts = delimLine.split(
+						delimiter.includes(':::') ? ':::' : '::',
+					);
+					rawKey = cleanStr(
+						frontLines.join(' ') + ' ' + (parts[0] || ''),
+					).toLowerCase();
+				}
+
+				// בדיקת כפילויות
+				if (rawKey !== '' && seenKeys.has(rawKey)) {
+					duplicatesCount++;
+					// מדלגים כליל על הכרטיס הכפול ועל המקף שקדם לו, כך שיישמר מרווח טבעי
 					continue;
 				}
+
+				if (rawKey !== '') {
+					seenKeys.add(rawKey);
+				}
+
+				// מחיקת כל הרווחים הפנימיים שבתוך השאלה או התשובה
+				const cleanedFront = frontLines.filter(
+					(l) => cleanStr(l) !== '',
+				);
+				const cleanedBack = backLines.filter((l) => cleanStr(l) !== '');
+
+				// מחזירים את המקף התוחם
+				if (i > 0) outLines.push('-');
+
+				// מרכיבים את הכרטיס ללא רווחים פנימיים
+				outLines.push(...cleanedFront);
+				if (!isInline) {
+					outLines.push(delimiter);
+				} else {
+					outLines.push(group[delimiterIdx]!); // שורת ההפרדה המקורית של inline
+				}
+				outLines.push(...cleanedBack);
+			} else {
+				// זה לא כרטיס (כותרת, הערות, או סתם שטח בין מקפים שהמשתמש השאיר ריק)
+				if (i > 0) outLines.push('-');
+				outLines.push(...group);
 			}
-			cleanedLines.push(currLine);
 		}
 
-		await this.app.vault.modify(file, cleanedLines.join('\n'));
-		new Notice(
-			`Fixed formatting and removed ${duplicatesCount} duplicate card(s).`,
-		);
+		// שמירת השינויים לקובץ המקורי בדיוק לפי המבנה שעיצבנו
+		const finalContent = outLines.join('\n');
+		await this.app.vault.modify(file, finalContent);
+
+		if (duplicatesCount > 0) {
+			new Notice(
+				`Cards formatting updated and removed ${duplicatesCount} duplicate card(s).`,
+			);
+		} else {
+			new Notice(
+				'Cards formatting fixed successfully! Internal spaces removed based on dash boundaries.',
+			);
+		}
 	}
 }
