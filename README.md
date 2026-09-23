@@ -1,5 +1,3 @@
-Markdown
-
 # Mobile-SR
 
 Spaced Repetition with mobile support
