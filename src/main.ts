@@ -743,9 +743,8 @@ export class DashboardModal extends Modal {
 				});
 
 				const infoDiv = deckCard.createDiv();
-				infoDiv.createEl('strong', { text: deckName });
 				infoDiv
-					.createEl('div', {
+					.createDiv({
 						text: `${dueCards.length} cards due`,
 						cls: 'srs-deck-count',
 					})
