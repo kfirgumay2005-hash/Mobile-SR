@@ -13,10 +13,12 @@ import {
 	SpacedRepetitionSettingTab,
 } from './settings';
 
-// פונקציית עזר לניקוי רווחים ותווי כיווניות (BiDi) שמוסתרים בטקסטים בעברית
 export const cleanStr = (s: string | undefined): string => {
 	if (s === undefined) return '';
-	return s.replace(/[\u200B-\u200F\u202A-\u202E]/g, '').trim();
+	return s
+		.replace(/\r/g, '')
+		.replace(/[\u200B-\u200F\u202A-\u202E]/g, '')
+		.trim();
 };
 
 // ============================================================================
@@ -24,12 +26,7 @@ export const cleanStr = (s: string | undefined): string => {
 // ============================================================================
 
 export type Rating = 1 | 2 | 3 | 4;
-export type CardType =
-	| 'SingleLine'
-	| 'SingleLineReversed'
-	| 'MultiLine'
-	| 'MultiLineReversed'
-	| 'Cloze';
+export type CardType = 'MultiLine' | 'MultiLineReversed';
 
 export interface CardSchedulingMetadata {
 	cardId: string;
@@ -56,7 +53,7 @@ export interface Flashcard {
 }
 
 // ============================================================================
-// 2. Algorithm Engine (SRSEngine - FSRS v4.5 & SM-2)
+// 2. Algorithm Engine (SRSEngine)
 // ============================================================================
 
 export class SRSEngine {
@@ -227,7 +224,8 @@ export class FlashcardParser {
 		app: App,
 		validTags: string[],
 	): Promise<Flashcard[]> {
-		const content = await app.vault.read(file);
+		const rawContent = await app.vault.read(file);
+		const content = rawContent.replace(/\r\n/g, '\n');
 		const lines = content.split('\n');
 		const cardsMap = new Map<string, Flashcard>();
 
@@ -239,116 +237,16 @@ export class FlashcardParser {
 		const isCardDelimiter = (line: string | undefined): boolean => {
 			if (line === undefined) return false;
 			const t = cleanStr(line);
-			return (
-				t === '?' ||
-				t === '??' ||
-				t === '-' || // מקף כעת נחשב לגבול כרטיס רשמי
-				t.includes('::') ||
-				t.includes(':::')
-			);
+			return t === '?' || t === '??' || t === '-';
 		};
 
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
 			if (line === undefined) continue;
 
-			if (line.includes(':::') && !cleanStr(line).startsWith('//')) {
-				const parts = line.split(':::');
-				if (
-					parts.length === 2 &&
-					parts[0] !== undefined &&
-					parts[1] !== undefined
-				) {
-					const q = parts[0].trim();
-					const a = parts[1].trim();
-
-					const idFwd = this.generateHash(
-						`${file.path}:fwd:${q}:${a}`,
-					);
-					cardsMap.set(idFwd, {
-						id: idFwd,
-						filePath: file.path,
-						deckName,
-						type: 'SingleLineReversed',
-						front: q,
-						back: a,
-						lineStart: i,
-						lineEnd: i,
-						rawContent: line,
-					});
-
-					const idRev = this.generateHash(
-						`${file.path}:rev:${q}:${a}`,
-					);
-					cardsMap.set(idRev, {
-						id: idRev,
-						filePath: file.path,
-						deckName,
-						type: 'SingleLineReversed',
-						front: a,
-						back: q,
-						lineStart: i,
-						lineEnd: i,
-						rawContent: line,
-					});
-					continue;
-				}
-			}
-
-			if (line.includes('::') && !cleanStr(line).startsWith('//')) {
-				const parts = line.split('::');
-				if (
-					parts.length === 2 &&
-					parts[0] !== undefined &&
-					parts[1] !== undefined
-				) {
-					const q = parts[0].trim();
-					const a = parts[1].trim();
-					const id = this.generateHash(
-						`${file.path}:single:${q}:${a}`,
-					);
-					cardsMap.set(id, {
-						id,
-						filePath: file.path,
-						deckName,
-						type: 'SingleLine',
-						front: q,
-						back: a,
-						lineStart: i,
-						lineEnd: i,
-						rawContent: line,
-					});
-					continue;
-				}
-			}
-
-			if (line.includes('==') && !cleanStr(line).startsWith('//')) {
-				const clozeRegex = /==(.*?)==/g;
-				let match: RegExpExecArray | null;
-				while ((match = clozeRegex.exec(line)) !== null) {
-					const answer = match[1] ?? '';
-					const question = line.replace(match[0], '[...]');
-					const id = this.generateHash(
-						`${file.path}:cloze:${question}:${answer}`,
-					);
-					cardsMap.set(id, {
-						id,
-						filePath: file.path,
-						deckName,
-						type: 'Cloze',
-						front: question,
-						back: answer,
-						lineStart: i,
-						lineEnd: i,
-						rawContent: line,
-					});
-				}
-			}
-
 			if (cleanStr(line) === '?' || cleanStr(line) === '??') {
 				const isReversed = cleanStr(line) === '??';
 
-				// סורק למעלה עד למקף (מדלג על שורות ריקות בדרך)
 				let qStart = i - 1;
 				while (
 					qStart >= 0 &&
@@ -357,9 +255,8 @@ export class FlashcardParser {
 				) {
 					qStart--;
 				}
-				qStart++; // השורה שאחרי המקף
+				qStart++;
 
-				// סורק למטה עד למקף (מדלג על שורות ריקות בדרך)
 				let aEnd = i + 1;
 				while (
 					aEnd < lines.length &&
@@ -368,7 +265,7 @@ export class FlashcardParser {
 				) {
 					aEnd++;
 				}
-				aEnd--; // השורה שלפני המקף הבא
+				aEnd--;
 
 				if (qStart <= i && aEnd >= i) {
 					const qText = lines.slice(qStart, i).join('\n').trim();
@@ -417,9 +314,10 @@ export class FlashcardParser {
 	}
 
 	private static generateHash(str: string): string {
+		const normalized = str.replace(/\r/g, '').trim();
 		let hash = 0;
-		for (let i = 0; i < str.length; i++) {
-			const char = str.charCodeAt(i);
+		for (let i = 0; i < normalized.length; i++) {
+			const char = normalized.charCodeAt(i);
 			hash = (hash << 5) - hash + char;
 			hash |= 0;
 		}
@@ -626,7 +524,7 @@ export class ReviewModal extends Modal {
 	): Promise<void> {
 		nextMeta.cardId = card.id;
 		this.plugin.store[card.id] = nextMeta;
-		await this.plugin.saveStore();
+		await this.plugin.saveCardStore();
 		this.currentIndex++;
 		this.isAnswerShown = false;
 		void this.renderCurrentCard();
@@ -639,7 +537,7 @@ export class ReviewModal extends Modal {
 		const file = this.app.vault.getAbstractFileByPath(card.filePath);
 		if (file instanceof TFile) {
 			const content = await this.app.vault.read(file);
-			const lines = content.split('\n');
+			const lines = content.replace(/\r\n/g, '\n').split('\n');
 			lines.splice(
 				card.lineStart,
 				card.lineEnd - card.lineStart + 1,
@@ -668,7 +566,7 @@ export class DashboardModal extends Modal {
 		this.modalEl.addClass('srs-dashboard-modal');
 		this.contentEl.empty();
 		this.contentEl.createEl('h2', {
-			text: '🔍 Scanning decks and cleaning data...',
+			text: '🔍 Scanning decks and preparing cards...',
 		});
 
 		void this.loadAndSyncCards().then(() => {
@@ -681,11 +579,17 @@ export class DashboardModal extends Modal {
 	}
 
 	private async loadAndSyncCards(): Promise<void> {
+		// וידוא שהמידע המעודכן ביותר בקובץ (גם ממכשירים אחרים) טעון לפני חישוב כרטיסים
+		await this.plugin.loadAllData();
+
 		const files = this.app.vault.getMarkdownFiles();
 		this.allCards = [];
 		this.cardsMap.clear();
 
 		for (const file of files) {
+			if (file.name === 'srs-data.md' || file.name === 'srs-data.json')
+				continue;
+
 			const cards = await FlashcardParser.parseFile(
 				file,
 				this.app,
@@ -696,25 +600,12 @@ export class DashboardModal extends Modal {
 				this.cardsMap.set(c.id, c);
 			}
 		}
-
-		let storeChanged = false;
-		for (const storedId in this.plugin.store) {
-			if (!this.cardsMap.has(storedId)) {
-				delete this.plugin.store[storedId];
-				storeChanged = true;
-			}
-		}
-
-		if (storeChanged) {
-			await this.plugin.saveStore();
-		}
 	}
 
 	private render(): void {
 		const { contentEl } = this;
 		contentEl.empty();
 
-		// --- SECTION 1: DECKS TO REVIEW ---
 		contentEl.createEl('h2', { text: 'Decks to Review' });
 
 		const now = Date.now();
@@ -757,6 +648,7 @@ export class DashboardModal extends Modal {
 				});
 
 				const infoDiv = deckCard.createDiv();
+				infoDiv.createEl('strong', { text: deckName });
 				infoDiv
 					.createDiv({
 						text: `${dueCards.length} cards due`,
@@ -777,7 +669,6 @@ export class DashboardModal extends Modal {
 
 		contentEl.createEl('hr');
 
-		// --- SECTION 2: REVIEWED CARDS STATUS ---
 		contentEl.createEl('h2', { text: 'Reviewed Flashcards Status' });
 
 		const storeEntries = Object.values(this.plugin.store);
@@ -928,10 +819,22 @@ export class DashboardModal extends Modal {
 export default class SpacedRepetitionPlugin extends Plugin {
 	settings!: SpacedRepetitionSettings;
 	store: Record<string, CardSchedulingMetadata> = {};
+	isSaving: boolean = false; // דגל למניעת לולאת רענון בעת שמירה
 
 	async onload(): Promise<void> {
-		await this.loadSettings();
-		await this.loadStore();
+		// מוודא שהכספת טעונה במלואה לפני ניסיון הקריאה מהקובץ
+		this.app.workspace.onLayoutReady(async () => {
+			await this.loadAllData();
+		});
+
+		// מאזין לשינויים בקובץ ברקע (עבור סנכרון עם הטלפון / LiveSync)
+		this.registerEvent(
+			this.app.vault.on('modify', async (file) => {
+				if (file.path === this.getDataFilePath() && !this.isSaving) {
+					await this.loadAllData();
+				}
+			}),
+		);
 
 		this.addRibbonIcon(
 			'clipboard-check',
@@ -949,7 +852,6 @@ export default class SpacedRepetitionPlugin extends Plugin {
 			},
 		});
 
-		// פקודה אולטימטיבית לסידור הכרטיסיות ומחיקת כפילויות – מבוסס מקפים (-) בלבד
 		this.addCommand({
 			id: 'fix-cards-and-remove-duplicates',
 			name: 'Fix Cards Spacing and Remove Duplicates',
@@ -961,32 +863,138 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		this.addSettingTab(new SpacedRepetitionSettingTab(this.app, this));
 	}
 
-	async loadSettings(): Promise<void> {
-		const loadedData =
-			(await this.loadData()) as Partial<SpacedRepetitionSettings> | null;
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedData || {});
+	public getDataFilePath(): string {
+		const folder = this.settings?.dataFolderPath
+			? this.settings.dataFolderPath.trim().replace(/^\/+|\/+$/g, '')
+			: '';
+		return folder ? `${folder}/srs-data.md` : 'srs-data.md';
+	}
+
+	private getVaultDataFile(): TFile | null {
+		const targetPath = this.getDataFilePath();
+
+		let file = this.app.vault.getAbstractFileByPath(targetPath);
+		if (file instanceof TFile) return file;
+
+		const files = this.app.vault.getFiles();
+		return files.find((f) => f.name === 'srs-data.md') || null;
+	}
+
+	private async ensureFolderExists(folderPath: string): Promise<void> {
+		if (!folderPath) return;
+		const normalized = folderPath.trim().replace(/^\/+|\/+$/g, '');
+		if (!normalized) return;
+
+		const parts = normalized.split('/');
+		let currentPath = '';
+		for (const part of parts) {
+			currentPath = currentPath ? `${currentPath}/${part}` : part;
+			const folderExists =
+				this.app.vault.getAbstractFileByPath(currentPath);
+			if (!folderExists) {
+				try {
+					await this.app.vault.createFolder(currentPath);
+				} catch {
+					// Folder exists or creation failed
+				}
+			}
+		}
+	}
+
+	async loadAllData(): Promise<void> {
+		const loadedSettings = await this.loadData();
+		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedSettings);
+
+		let newStore: Record<string, CardSchedulingMetadata> = {};
+		const file = this.getVaultDataFile();
+
+		if (file instanceof TFile) {
+			try {
+				const content = await this.app.vault.read(file);
+				// שיפור ה-Regex על מנת לטפל בשינויי שורות/רווחים בטלפון
+				const match = content.match(/```json\s+([\s\S]*?)\s+```/);
+				let parsed: any = null;
+
+				if (match && match[1]) {
+					parsed = JSON.parse(match[1]);
+				} else {
+					try {
+						parsed = JSON.parse(content);
+					} catch (e) {
+						console.warn(
+							'Not a valid JSON format inside data file',
+						);
+					}
+				}
+
+				if (parsed && typeof parsed === 'object') {
+					if (parsed.store) {
+						newStore = parsed.store;
+					} else if (!parsed.settings) {
+						newStore = parsed;
+					}
+				}
+			} catch (e) {
+				console.error('Error reading SRS card data file:', e);
+				// במידה ויש שגיאת קריאה, לא נדרוס את הזיכרון ונאבד נתונים
+				return;
+			}
+		}
+
+		this.store = newStore;
 	}
 
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
 	}
 
-	async loadStore(): Promise<void> {
-		const data = (await this.loadData()) as {
-			store?: Record<string, CardSchedulingMetadata>;
-		} | null;
-		if (data && data.store) {
-			this.store = data.store;
+	async saveCardStore(): Promise<void> {
+		this.isSaving = true;
+		try {
+			const filePath = this.getDataFilePath();
+			const folderPath = this.settings.dataFolderPath
+				? this.settings.dataFolderPath.trim().replace(/^\/+|\/+$/g, '')
+				: '';
+
+			if (folderPath) {
+				await this.ensureFolderExists(folderPath);
+			}
+
+			const dataObj = {
+				store: this.store,
+			};
+
+			const jsonString = JSON.stringify(dataObj, null, 2);
+			const markdownContent = `---\ntags: [srs-system-data]\n---\n# Spaced Repetition Data\n\n> ⚠️ **Warning:** Do not edit this file manually unless you know what you are doing. The plugin reads and writes directly from the code block below.\n\n\`\`\`json\n${jsonString}\n\`\`\`\n`;
+
+			const file = this.app.vault.getAbstractFileByPath(filePath);
+
+			if (file instanceof TFile) {
+				await this.app.vault.modify(file, markdownContent);
+			} else {
+				const oldFile = this.getVaultDataFile();
+				if (oldFile && oldFile.path !== filePath) {
+					try {
+						await this.app.vault.trash(oldFile, true);
+					} catch (e) {}
+				}
+
+				await this.app.vault.create(filePath, markdownContent);
+			}
+		} finally {
+			// שחרור הדגל לאחר זמן קצר כדי לאפשר לאירועי ה-modify להסתיים
+			setTimeout(() => {
+				this.isSaving = false;
+			}, 1000);
 		}
 	}
 
-	async saveStore(): Promise<void> {
-		const currentData =
-			((await this.loadData()) as {
-				store?: Record<string, CardSchedulingMetadata>;
-			} | null) || {};
-		currentData.store = this.store;
-		await this.saveData(currentData);
+	async applyDataLocation(): Promise<void> {
+		await this.saveSettings();
+		await this.saveCardStore();
+		new Notice(
+			`Data location applied!\nSaved settings to plugin data.json and card data to: ${this.getDataFilePath()}`,
+		);
 	}
 
 	async fixCardsAndRemoveDuplicates(): Promise<void> {
@@ -997,17 +1005,13 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		}
 
 		const content = await this.app.vault.read(file);
-		const lines = content.split('\n');
+		const lines = content.replace(/\r\n/g, '\n').split('\n');
 
-		// חלוקת הקובץ לקבוצות של שורות על פי המקפים ("-")
-		// חלוקת הקובץ לקבוצות של שורות על פי המקפים ("-")
 		const dashGroups: string[][] = [];
 		let currentGroup: string[] = [];
 
 		for (let i = 0; i < lines.length; i++) {
 			const line = lines[i];
-
-			// מוודא שהשורה מוגדרת כדי לרצות את TypeScript
 			if (line === undefined) continue;
 
 			if (cleanStr(line) === '-') {
@@ -1029,9 +1033,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 
 			let delimiter = '';
 			let delimiterIdx = -1;
-			let isInline = false;
 
-			// זיהוי אם הבלוק הזה מכיל כרטיס (מחפשים שאלה '?' או '::')
 			for (let j = 0; j < group.length; j++) {
 				const trimmed = cleanStr(group[j]);
 				if (trimmed === '?' || trimmed === '??') {
@@ -1039,36 +1041,15 @@ export default class SpacedRepetitionPlugin extends Plugin {
 					delimiterIdx = j;
 					break;
 				}
-				if (trimmed.includes('::') && !trimmed.startsWith('//')) {
-					delimiter = group[j]!.trim();
-					delimiterIdx = j;
-					isInline = true;
-					break;
-				}
 			}
 
 			if (delimiterIdx !== -1) {
-				// זיהינו כרטיס בתוך גבולות המקפים
 				const frontLines = group.slice(0, delimiterIdx);
 				const backLines = group.slice(delimiterIdx + 1);
+				const rawKey = cleanStr(frontLines.join(' ')).toLowerCase();
 
-				let rawKey = '';
-				if (!isInline) {
-					rawKey = cleanStr(frontLines.join(' ')).toLowerCase();
-				} else {
-					const delimLine = group[delimiterIdx] || '';
-					const parts = delimLine.split(
-						delimiter.includes(':::') ? ':::' : '::',
-					);
-					rawKey = cleanStr(
-						frontLines.join(' ') + ' ' + (parts[0] || ''),
-					).toLowerCase();
-				}
-
-				// בדיקת כפילויות
 				if (rawKey !== '' && seenKeys.has(rawKey)) {
 					duplicatesCount++;
-					// מדלגים כליל על הכרטיס הכפול ועל המקף שקדם לו, כך שיישמר מרווח טבעי
 					continue;
 				}
 
@@ -1076,31 +1057,22 @@ export default class SpacedRepetitionPlugin extends Plugin {
 					seenKeys.add(rawKey);
 				}
 
-				// מחיקת כל הרווחים הפנימיים שבתוך השאלה או התשובה
 				const cleanedFront = frontLines.filter(
 					(l) => cleanStr(l) !== '',
 				);
 				const cleanedBack = backLines.filter((l) => cleanStr(l) !== '');
 
-				// מחזירים את המקף התוחם
 				if (i > 0) outLines.push('-');
 
-				// מרכיבים את הכרטיס ללא רווחים פנימיים
 				outLines.push(...cleanedFront);
-				if (!isInline) {
-					outLines.push(delimiter);
-				} else {
-					outLines.push(group[delimiterIdx]!); // שורת ההפרדה המקורית של inline
-				}
+				outLines.push(delimiter);
 				outLines.push(...cleanedBack);
 			} else {
-				// זה לא כרטיס (כותרת, הערות, או סתם שטח בין מקפים שהמשתמש השאיר ריק)
 				if (i > 0) outLines.push('-');
 				outLines.push(...group);
 			}
 		}
 
-		// שמירת השינויים לקובץ המקורי בדיוק לפי המבנה שעיצבנו
 		const finalContent = outLines.join('\n');
 		await this.app.vault.modify(file, finalContent);
 

@@ -1,4 +1,10 @@
-import { App, PluginSettingTab, Setting } from 'obsidian';
+import {
+	AbstractInputSuggest,
+	App,
+	PluginSettingTab,
+	Setting,
+	TFolder,
+} from 'obsidian';
 import SpacedRepetitionPlugin from './main';
 
 export interface SpacedRepetitionSettings {
@@ -8,6 +14,7 @@ export interface SpacedRepetitionSettings {
 	fsrsWeights: number[];
 	flashcardTags: string[];
 	showIntervalOnButtons: boolean;
+	dataFolderPath: string;
 }
 
 export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
@@ -20,7 +27,43 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	],
 	flashcardTags: ['#flashcards'],
 	showIntervalOnButtons: true,
+	dataFolderPath: 'SRS-Data',
 };
+
+// מחלקה המציגה רשימת תיקיות קיימות מהכספת עם אפשרות חיפוש
+export class FolderSuggest extends AbstractInputSuggest<TFolder> {
+	private inputEl: HTMLInputElement;
+
+	constructor(app: App, textInputEl: HTMLInputElement) {
+		super(app, textInputEl);
+		this.inputEl = textInputEl;
+	}
+
+	getSuggestions(inputStr: string): TFolder[] {
+		const abstractFiles = this.app.vault.getAllLoadedFiles();
+		const folders: TFolder[] = [];
+		const lowerInput = inputStr.toLowerCase();
+
+		for (const file of abstractFiles) {
+			if (file instanceof TFolder) {
+				if (!inputStr || file.path.toLowerCase().includes(lowerInput)) {
+					folders.push(file);
+				}
+			}
+		}
+		return folders;
+	}
+
+	renderSuggestion(folder: TFolder, el: HTMLElement): void {
+		el.setText(folder.path);
+	}
+
+	selectSuggestion(folder: TFolder): void {
+		this.inputEl.value = folder.path;
+		this.inputEl.dispatchEvent(new Event('input'));
+		this.close();
+	}
+}
 
 export class SpacedRepetitionSettingTab extends PluginSettingTab {
 	plugin: SpacedRepetitionPlugin;
@@ -30,17 +73,43 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 		this.plugin = plugin;
 	}
 
-	// Satisfies the declarative settings warning for Obsidian 1.13.0+ users
-	getSettingDefinitions(): Record<string, unknown>[] {
-		return [];
-	}
-
 	display(): void {
 		const { containerEl } = this;
 		containerEl.empty();
 
+		new Setting(containerEl).setName('Data Storage Location').setHeading();
+
 		new Setting(containerEl)
-			.setName('Spaced Repetition algorithm')
+			.setName('Data Folder Path')
+			.setDesc(
+				'Select or search an existing folder in your vault where data will be stored. Leave empty for vault root.',
+			)
+			.addText((text) => {
+				text.setValue(this.plugin.settings.dataFolderPath).onChange(
+					async (value) => {
+						this.plugin.settings.dataFolderPath = value;
+						await this.plugin.saveSettings();
+					},
+				);
+				new FolderSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
+			.setName('Apply Data Location')
+			.setDesc(
+				'Click this button to save settings and card data into srs-data.md at the chosen folder path.',
+			)
+			.addButton((btn) =>
+				btn
+					.setButtonText('Apply')
+					.setCta()
+					.onClick(async () => {
+						await this.plugin.applyDataLocation();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Spaced Repetition Algorithm')
 			.setHeading();
 
 		new Setting(containerEl)
