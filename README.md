@@ -4,27 +4,9 @@ Spaced Repetition with mobile support
 
 ## How to Write Cards
 
-The plugin automatically detects several card formats within your Markdown files:
+Look at the attachment to see how to define cards.
 
 Add #flashcards at the top of the card.
-
-Define cards this way:
-
-(-)
-What is the capital of Japan?
-Hint: starts with T
-?
-Tokyo
-(-)
-Trump is the president of...?
-Hint: starts with U
-?
-United States of America
-(-)
-
-and so on...
-
-(you can also add images)
 
 ⚠️ The Critical Importance of Hyphens (-)
 
@@ -43,6 +25,8 @@ Clicking the plugin's icon in the ribbon bar or running the command Open Spaced 
     Reviewed Cards Status Table: A central table displaying all the flashcards you've already studied, complete with live text search, calculated remaining time until the next review, and current intervals.
 
 ⚙️ Plugin Settings Overview
+
+Choose a folder in which the cards due date will be saved.
 
 You can customize your learning experience in the plugin settings:
 
