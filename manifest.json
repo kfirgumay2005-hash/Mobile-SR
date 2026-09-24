@@ -1,8 +1,8 @@
 {
 	"id": "mobilesr",
 	"name": "Mobile-SR",
-	"version": "1.1.1",
-	"minAppVersion": "1.6.0",
+	"version": "1.1.2",
+	"minAppVersion": "1.8.0",
 	"description": "Spaced repetition with mobile support.",
 	"author": "KfirG",
 	"authorUrl": "https://github.com/kfirgumay2005-hash",
