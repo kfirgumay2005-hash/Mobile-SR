@@ -30,7 +30,7 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	dataFolderPath: 'SRS-Data',
 };
 
-// מחלקה המציגה רשימת תיקיות קיימות מהכספת עם אפשרות חיפוש
+// eslint-disable-next-line obsidianmd/no-unsupported-api
 export class FolderSuggest extends AbstractInputSuggest<TFolder> {
 	private inputEl: HTMLInputElement;
 
@@ -71,6 +71,46 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 	constructor(app: App, plugin: SpacedRepetitionPlugin) {
 		super(app, plugin);
 		this.plugin = plugin;
+	}
+
+	getSettingDefinitions() {
+		return [
+			{
+				id: 'dataFolderPath',
+				name: 'Data Folder Path',
+				description:
+					'Select or search an existing folder in your vault where data will be stored. Leave empty for vault root.',
+			},
+			{
+				id: 'algorithm',
+				name: 'Scheduling Algorithm',
+				description: 'Select the spaced repetition algorithm.',
+			},
+			{
+				id: 'requestRetention',
+				name: 'Target Request Retention',
+				description:
+					'Desired probability of recalling a card (0.70 to 0.97). Recommended to keep at 0.90.',
+			},
+			{
+				id: 'maximumInterval',
+				name: 'Maximum Interval (Days)',
+				description:
+					'Upper limit for scheduled review intervals in days.',
+			},
+			{
+				id: 'flashcardTags',
+				name: 'Flashcard Deck Tags',
+				description:
+					'Comma-separated list of tags identifying flashcard notes (e.g., #flashcards).',
+			},
+			{
+				id: 'showIntervalOnButtons',
+				name: 'Show Interval Previews',
+				description:
+					'Display projected next review times directly on the rating buttons (Again, Hard, Good, Easy).',
+			},
+		];
 	}
 
 	display(): void {
