@@ -579,7 +579,6 @@ export class DashboardModal extends Modal {
 	}
 
 	private async loadAndSyncCards(): Promise<void> {
-		// וידוא שהמידע המעודכן ביותר בקובץ (גם ממכשירים אחרים) טעון לפני חישוב כרטיסים
 		await this.plugin.loadAllData();
 
 		const files = this.app.vault.getMarkdownFiles();
@@ -819,15 +818,13 @@ export class DashboardModal extends Modal {
 export default class SpacedRepetitionPlugin extends Plugin {
 	settings!: SpacedRepetitionSettings;
 	store: Record<string, CardSchedulingMetadata> = {};
-	isSaving: boolean = false; // דגל למניעת לולאת רענון בעת שמירה
+	isSaving: boolean = false;
 
 	async onload(): Promise<void> {
-		// מוודא שהכספת טעונה במלואה לפני ניסיון הקריאה מהקובץ
 		this.app.workspace.onLayoutReady(async () => {
 			await this.loadAllData();
 		});
 
-		// מאזין לשינויים בקובץ ברקע (עבור סנכרון עם הטלפון / LiveSync)
 		this.registerEvent(
 			this.app.vault.on('modify', async (file) => {
 				if (file.path === this.getDataFilePath() && !this.isSaving) {
@@ -902,7 +899,8 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	}
 
 	async loadAllData(): Promise<void> {
-		const loadedSettings = await this.loadData();
+		const loadedSettings =
+			(await this.loadData()) as Partial<SpacedRepetitionSettings> | null;
 		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedSettings);
 
 		let newStore: Record<string, CardSchedulingMetadata> = {};
@@ -911,32 +909,41 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		if (file instanceof TFile) {
 			try {
 				const content = await this.app.vault.read(file);
-				// שיפור ה-Regex על מנת לטפל בשינויי שורות/רווחים בטלפון
 				const match = content.match(/```json\s+([\s\S]*?)\s+```/);
-				let parsed: any = null;
+				let parsed: unknown = null;
 
 				if (match && match[1]) {
 					parsed = JSON.parse(match[1]);
 				} else {
 					try {
 						parsed = JSON.parse(content);
-					} catch (e) {
+					} catch {
 						console.warn(
 							'Not a valid JSON format inside data file',
 						);
 					}
 				}
 
-				if (parsed && typeof parsed === 'object') {
-					if (parsed.store) {
-						newStore = parsed.store;
-					} else if (!parsed.settings) {
-						newStore = parsed;
+				if (parsed && typeof parsed === 'object' && parsed !== null) {
+					const data = parsed as Record<string, unknown>;
+					if (
+						data.store &&
+						typeof data.store === 'object' &&
+						data.store !== null
+					) {
+						newStore = data.store as Record<
+							string,
+							CardSchedulingMetadata
+						>;
+					} else if (!data.settings) {
+						newStore = data as Record<
+							string,
+							CardSchedulingMetadata
+						>;
 					}
 				}
 			} catch (e) {
 				console.error('Error reading SRS card data file:', e);
-				// במידה ויש שגיאת קריאה, לא נדרוס את הזיכרון ונאבד נתונים
 				return;
 			}
 		}
@@ -975,15 +982,16 @@ export default class SpacedRepetitionPlugin extends Plugin {
 				const oldFile = this.getVaultDataFile();
 				if (oldFile && oldFile.path !== filePath) {
 					try {
-						await this.app.vault.trash(oldFile, true);
-					} catch (e) {}
+						await this.app.fileManager.trashFile(oldFile);
+					} catch {
+						// Ignore trash failure
+					}
 				}
 
 				await this.app.vault.create(filePath, markdownContent);
 			}
 		} finally {
-			// שחרור הדגל לאחר זמן קצר כדי לאפשר לאירועי ה-modify להסתיים
-			setTimeout(() => {
+			window.setTimeout(() => {
 				this.isSaving = false;
 			}, 1000);
 		}
