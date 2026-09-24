@@ -902,8 +902,15 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	}
 
 	async loadAllData(): Promise<void> {
-		const loadedSettings = await this.loadData();
-		this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedSettings);
+		const loadedSettings = (await this.loadData()) as Record<
+			string,
+			unknown
+		> | null;
+		if (loadedSettings && typeof loadedSettings === 'object') {
+			this.settings = Object.assign({}, DEFAULT_SETTINGS, loadedSettings);
+		} else {
+			this.settings = Object.assign({}, DEFAULT_SETTINGS);
+		}
 
 		let newStore: Record<string, CardSchedulingMetadata> = {};
 		const file = this.getVaultDataFile();
@@ -913,29 +920,36 @@ export default class SpacedRepetitionPlugin extends Plugin {
 				const content = await this.app.vault.read(file);
 				// שיפור ה-Regex על מנת לטפל בשינויי שורות/רווחים בטלפון
 				const match = content.match(/```json\s+([\s\S]*?)\s+```/);
-				let parsed: any = null;
+				let parsed: unknown = null;
 
 				if (match && match[1]) {
 					parsed = JSON.parse(match[1]);
 				} else {
 					try {
 						parsed = JSON.parse(content);
-					} catch (e) {
+					} catch {
 						console.warn(
 							'Not a valid JSON format inside data file',
 						);
 					}
 				}
 
-				if (parsed && typeof parsed === 'object') {
-					if (parsed.store) {
-						newStore = parsed.store;
-					} else if (!parsed.settings) {
-						newStore = parsed;
+				if (parsed && typeof parsed === 'object' && parsed !== null) {
+					const dataObj = parsed as {
+						store?: Record<string, CardSchedulingMetadata>;
+						settings?: unknown;
+					};
+					if (dataObj.store && typeof dataObj.store === 'object') {
+						newStore = dataObj.store;
+					} else if (!dataObj.settings) {
+						newStore = parsed as Record<
+							string,
+							CardSchedulingMetadata
+						>;
 					}
 				}
-			} catch (e) {
-				console.error('Error reading SRS card data file:', e);
+			} catch (err) {
+				console.error('Error reading SRS card data file:', err);
 				// במידה ויש שגיאת קריאה, לא נדרוס את הזיכרון ונאבד נתונים
 				return;
 			}
@@ -975,15 +989,17 @@ export default class SpacedRepetitionPlugin extends Plugin {
 				const oldFile = this.getVaultDataFile();
 				if (oldFile && oldFile.path !== filePath) {
 					try {
-						await this.app.vault.trash(oldFile, true);
-					} catch (e) {}
+						await this.app.fileManager.trashFile(oldFile);
+					} catch {
+						// Ignored: File could not be trashed
+					}
 				}
 
 				await this.app.vault.create(filePath, markdownContent);
 			}
 		} finally {
 			// שחרור הדגל לאחר זמן קצר כדי לאפשר לאירועי ה-modify להסתיים
-			setTimeout(() => {
+			window.setTimeout(() => {
 				this.isSaving = false;
 			}, 1000);
 		}
