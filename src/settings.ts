@@ -7,12 +7,16 @@ import {
 } from 'obsidian';
 import SpacedRepetitionPlugin from './main';
 
+export type DuplicateMode = 'exact' | 'firstLine';
+
 export interface SpacedRepetitionSettings {
 	algorithm: 'FSRS' | 'SM2';
 	requestRetention: number;
 	maximumInterval: number;
 	fsrsWeights: number[];
 	flashcardTags: string[];
+	hintTags: string[];
+	duplicateMode: DuplicateMode;
 	showIntervalOnButtons: boolean;
 	dataFolderPath: string;
 }
@@ -26,6 +30,8 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 		0.05, 0.34, 1.26, 0.29, 2.61,
 	],
 	flashcardTags: ['#flashcards'],
+	hintTags: ['#hint'],
+	duplicateMode: 'exact',
 	showIntervalOnButtons: true,
 	dataFolderPath: 'SRS-Data',
 };
@@ -210,6 +216,8 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 					}),
 			);
 
+		new Setting(containerEl).setName('Decks & Cards').setHeading();
+
 		new Setting(containerEl)
 			.setName('Flashcard Deck Tags')
 			.setDesc(
@@ -228,6 +236,24 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Hint Deck Tags')
+			.setDesc(
+				'Comma-separated list of tags (e.g., #hint). If a deck note contains one of these tags in addition to a flashcard tag, every card in it gets a "Show Hint" button: the lines between the first line of the card and the ? line are treated as the hint and hidden until requested.',
+			)
+			.addText((text) =>
+				text
+					.setPlaceholder('#hint')
+					.setValue(this.plugin.settings.hintTags.join(', '))
+					.onChange(async (value) => {
+						this.plugin.settings.hintTags = value
+							.split(',')
+							.map((t) => t.trim())
+							.filter((t) => t.length > 0);
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
 			.setName('Show Interval Previews')
 			.setDesc(
 				'Display projected next review times directly on the rating buttons (Again, Hard, Good, Easy).',
@@ -237,6 +263,31 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.showIntervalOnButtons)
 					.onChange(async (value) => {
 						this.plugin.settings.showIntervalOnButtons = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl).setName('Duplicate Removal').setHeading();
+
+		new Setting(containerEl)
+			.setName('Duplicate Detection Mode')
+			.setDesc(
+				'How the "Fix Cards Spacing and Remove Duplicates" command decides that two cards in the active note are duplicates. Works with any language (Hebrew, English, etc.); comparison ignores letter case, extra spaces and invisible characters. The first occurrence is always kept.',
+			)
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption(
+						'exact',
+						'Identical content (front, hint and answer)',
+					)
+					.addOption(
+						'firstLine',
+						'Same first line (ignore hint and answer)',
+					)
+					.setValue(this.plugin.settings.duplicateMode)
+					.onChange(async (value) => {
+						this.plugin.settings.duplicateMode =
+							value === 'firstLine' ? 'firstLine' : 'exact';
 						await this.plugin.saveSettings();
 					}),
 			);

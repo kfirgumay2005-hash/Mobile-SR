@@ -21,6 +21,35 @@ export const cleanStr = (s: string | undefined): string => {
 		.trim();
 };
 
+// נרמול טקסט להשוואה (עברית / אנגלית / כל שפה): Unicode NFKC, הסרת תווים סמויים,
+// איחוד רווחים, והשוואה ללא תלות באותיות גדולות/קטנות
+export const normalizeForCompare = (s: string): string => {
+	return s
+		.normalize('NFKC')
+		.replace(/[\u200B-\u200F\u202A-\u202E\u2066-\u2069\u00AD\uFEFF]/g, '')
+		.replace(/\s+/g, ' ')
+		.trim()
+		.toLowerCase();
+};
+
+export const formatDateTime = (ts: number): string => {
+	const d = new Date(ts);
+	const p = (n: number): string => String(n).padStart(2, '0');
+	return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`;
+};
+
+const escapeRegExp = (s: string): string =>
+	s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+// בדיקה שתג (למשל #hint) מופיע כתג שלם ולא כחלק מתג אחר (כמו #hints)
+export const hasTagToken = (content: string, tag: string): boolean => {
+	const t = tag.trim();
+	if (!t) return false;
+	return new RegExp(`(^|[^\\w/-])${escapeRegExp(t)}(?![\\w/-])`).test(
+		content,
+	);
+};
+
 // ============================================================================
 // 1. Types & Interfaces
 // ============================================================================
@@ -38,6 +67,9 @@ export interface CardSchedulingMetadata {
 	lapses: number;
 	repetition: number;
 	lastReview: number;
+	// סך כל הפעמים שהכרטיס נבדק + חותמות זמן (ms) של כל בדיקה
+	reviewCount?: number;
+	reviewHistory?: number[];
 }
 
 export interface Flashcard {
@@ -47,10 +79,18 @@ export interface Flashcard {
 	type: CardType;
 	front: string;
 	back: string;
+	// השורה הראשונה של הכרטיס, והרמז (השורות שבין השורה הראשונה ל-?)
+	// הרמז מלא רק בדק שיש בו תג #hint (ורק בכיוון הקדמי של הכרטיס)
+	firstLine: string;
+	hint: string;
 	lineStart: number;
 	lineEnd: number;
 	rawContent: string;
 }
+
+// הטקסט שמוצג כ"שאלה" (בלי הרמז אם יש רמז)
+export const displayFront = (card: Flashcard): string =>
+	card.hint !== '' ? card.firstLine : card.front;
 
 // ============================================================================
 // 2. Algorithm Engine (SRSEngine)
@@ -223,6 +263,7 @@ export class FlashcardParser {
 		file: TFile,
 		app: App,
 		validTags: string[],
+		hintTags: string[],
 	): Promise<Flashcard[]> {
 		const rawContent = await app.vault.read(file);
 		const content = rawContent.replace(/\r\n/g, '\n');
@@ -231,6 +272,9 @@ export class FlashcardParser {
 
 		const hasTag = validTags.some((tag) => content.includes(tag));
 		if (!hasTag) return [];
+
+		// האם הדק הזה מוגדר כדק עם רמזים (תג #hint בנוסף ל-#flashcards)
+		const hintEnabled = hintTags.some((tag) => hasTagToken(content, tag));
 
 		const deckName = file.basename;
 
@@ -275,6 +319,14 @@ export class FlashcardParser {
 						.trim();
 					const raw = lines.slice(qStart, aEnd + 1).join('\n');
 
+					// השורה הראשונה = השאלה, מה שבינה לבין ה-? = הרמז
+					const qLines = qText.split('\n');
+					const qFirstLine = (qLines[0] ?? '').trim();
+					const qHint = hintEnabled
+						? qLines.slice(1).join('\n').trim()
+						: '';
+
+					// ה-ID נשאר מחושב על התוכן המלא כמו קודם, כדי לא לאבד התקדמות קיימת
 					const idFwd = this.generateHash(
 						`${file.path}:multi:${qText}:${aText}`,
 					);
@@ -285,6 +337,8 @@ export class FlashcardParser {
 						type: isReversed ? 'MultiLineReversed' : 'MultiLine',
 						front: qText,
 						back: aText,
+						firstLine: qFirstLine,
+						hint: qHint,
 						lineStart: qStart,
 						lineEnd: aEnd,
 						rawContent: raw,
@@ -301,6 +355,8 @@ export class FlashcardParser {
 							type: 'MultiLineReversed',
 							front: aText,
 							back: qText,
+							firstLine: (aText.split('\n')[0] ?? '').trim(),
+							hint: '',
 							lineStart: qStart,
 							lineEnd: aEnd,
 							rawContent: raw,
@@ -332,15 +388,24 @@ export class FlashcardParser {
 export class ReviewModal extends Modal {
 	private plugin: SpacedRepetitionPlugin;
 	private queue: Flashcard[];
+	// כל הכרטיסים של הדק (גם אלה שכבר הושלמו) - לצורך ספירת "הושלמו"
+	private deckCards: Flashcard[];
 	private currentIndex: number = 0;
 	private isAnswerShown: boolean = false;
+	private isHintShown: boolean = false;
 	private isEditing: boolean = false;
 	private component: Component;
 
-	constructor(app: App, plugin: SpacedRepetitionPlugin, queue: Flashcard[]) {
+	constructor(
+		app: App,
+		plugin: SpacedRepetitionPlugin,
+		queue: Flashcard[],
+		deckCards: Flashcard[],
+	) {
 		super(app);
 		this.plugin = plugin;
 		this.queue = queue;
+		this.deckCards = deckCards;
 		this.component = new Component();
 	}
 
@@ -355,6 +420,15 @@ export class ReviewModal extends Modal {
 		this.contentEl.empty();
 	}
 
+	// כרטיסים שלא צריך לבצע להם review כרגע (מועד הבדיקה הבא שלהם בעתיד)
+	private getCompletedCount(): number {
+		const now = Date.now();
+		return this.deckCards.filter((c) => {
+			const meta = this.plugin.store[c.id];
+			return !!meta && meta.due > now;
+		}).length;
+	}
+
 	private async renderCurrentCard(): Promise<void> {
 		const { contentEl } = this;
 		contentEl.empty();
@@ -363,6 +437,9 @@ export class ReviewModal extends Modal {
 			contentEl.createEl('h2', { text: '✨ Deck Completed!' });
 			contentEl.createEl('p', {
 				text: 'You have reviewed all due flashcards in this session.',
+			});
+			contentEl.createEl('p', {
+				text: `Completed in deck: ${this.getCompletedCount()} / ${this.deckCards.length}`,
 			});
 			const closeBtn = contentEl.createEl('button', {
 				text: 'Close',
@@ -390,7 +467,7 @@ export class ReviewModal extends Modal {
 			cls: 'srs-deck-title',
 		});
 		headerEl.createSpan({
-			text: `Card ${this.currentIndex + 1} / ${this.queue.length}`,
+			text: `Completed: ${this.getCompletedCount()} / ${this.deckCards.length}`,
 			cls: 'srs-card-progress',
 		});
 
@@ -428,14 +505,39 @@ export class ReviewModal extends Modal {
 			return;
 		}
 
+		const hasHint = card.hint !== '';
+
 		const frontEl = bodyEl.createDiv({ cls: 'srs-front-content' });
 		await MarkdownRenderer.render(
 			this.app,
-			card.front,
+			displayFront(card),
 			frontEl,
 			card.filePath,
 			this.component,
 		);
+
+		if (hasHint && (this.isHintShown || this.isAnswerShown)) {
+			const hintWrap = bodyEl.createDiv({ cls: 'srs-hint-wrapper' });
+			hintWrap.setCssStyles({
+				marginTop: '0.75em',
+				paddingLeft: '0.75em',
+				borderLeft: '3px solid var(--text-accent)',
+			});
+			const hintLabel = hintWrap.createDiv({ text: '💡 Hint' });
+			hintLabel.setCssStyles({
+				fontSize: '0.8em',
+				opacity: '0.7',
+				marginBottom: '0.25em',
+			});
+			const hintEl = hintWrap.createDiv({ cls: 'srs-hint-content' });
+			await MarkdownRenderer.render(
+				this.app,
+				card.hint,
+				hintEl,
+				card.filePath,
+				this.component,
+			);
+		}
 
 		if (this.isAnswerShown) {
 			bodyEl.createEl('hr');
@@ -453,6 +555,17 @@ export class ReviewModal extends Modal {
 		bottomBar.setCssStyles({ marginTop: '1.5em' });
 
 		if (!this.isAnswerShown) {
+			if (hasHint && !this.isHintShown) {
+				const hintBtn = bottomBar.createEl('button', {
+					text: 'Show Hint',
+				});
+				hintBtn.setCssStyles({ width: '100%', marginBottom: '8px' });
+				hintBtn.onclick = () => {
+					this.isHintShown = true;
+					void this.renderCurrentCard();
+				};
+			}
+
 			const showBtn = bottomBar.createEl('button', {
 				text: 'Show Answer',
 				cls: 'mod-cta',
@@ -522,11 +635,25 @@ export class ReviewModal extends Modal {
 		card: Flashcard,
 		nextMeta: CardSchedulingMetadata,
 	): Promise<void> {
+		const prev = this.plugin.store[card.id];
+		const reviewedAt = Date.now();
+
+		// כרטיסים ישנים שאין להם עדיין היסטוריה - מתחילים מהמידע הקיים
+		const prevHistory: number[] =
+			prev?.reviewHistory ??
+			(prev && prev.lastReview ? [prev.lastReview] : []);
+		const prevCount: number =
+			prev?.reviewCount ?? (prev ? Math.max(prev.repetition, 1) : 0);
+
 		nextMeta.cardId = card.id;
+		nextMeta.reviewHistory = [...prevHistory, reviewedAt];
+		nextMeta.reviewCount = prevCount + 1;
+
 		this.plugin.store[card.id] = nextMeta;
 		await this.plugin.saveCardStore();
 		this.currentIndex++;
 		this.isAnswerShown = false;
+		this.isHintShown = false;
 		void this.renderCurrentCard();
 	}
 
@@ -535,20 +662,94 @@ export class ReviewModal extends Modal {
 		newContent: string,
 	): Promise<void> {
 		const file = this.app.vault.getAbstractFileByPath(card.filePath);
-		if (file instanceof TFile) {
-			const content = await this.app.vault.read(file);
-			const lines = content.replace(/\r\n/g, '\n').split('\n');
-			lines.splice(
-				card.lineStart,
-				card.lineEnd - card.lineStart + 1,
-				newContent,
+		if (!(file instanceof TFile)) return;
+
+		const settings = this.plugin.settings;
+		const content = await this.app.vault.read(file);
+		const lines = content.replace(/\r\n/g, '\n').split('\n');
+
+		// מאתרים את הכרטיס בקובץ לפי התוכן (ולא רק לפי מספרי שורות), כי עריכת כרטיס
+		// קודם באותו סשן עלולה להזיז את השורות של כרטיסים אחרים
+		const oldLines = card.rawContent.split('\n');
+		const matchesAt = (s: number): boolean =>
+			oldLines.every((l, k) => lines[s + k] === l);
+
+		let start = card.lineStart;
+		if (!matchesAt(start)) {
+			start = -1;
+			for (let s = 0; s + oldLines.length <= lines.length; s++) {
+				if (matchesAt(s)) {
+					start = s;
+					break;
+				}
+			}
+		}
+
+		if (start === -1) {
+			new Notice(
+				'Could not locate this card in the note (it may have changed). Reopen the dashboard and try again.',
 			);
-			await this.app.vault.modify(file, lines.join('\n'));
+			return;
+		}
+
+		const blockStart = start;
+		const parseBlock = async (): Promise<Flashcard[]> => {
+			const parsed = await FlashcardParser.parseFile(
+				file,
+				this.app,
+				settings.flashcardTags,
+				settings.hintTags,
+			);
+			return parsed.filter((c) => c.lineStart === blockStart);
+		};
+
+		const before = await parseBlock();
+
+		lines.splice(blockStart, oldLines.length, newContent);
+		await this.app.vault.modify(file, lines.join('\n'));
+
+		const after = await parseBlock();
+
+		// עריכת כרטיס משנה את ה-ID שלו - מעבירים את ההתקדמות וההיסטוריה ל-ID החדש
+		// כדי שהסריקה של הדשבורד לא תמחק אותם כ"כרטיס שנמחק"
+		let migrated = false;
+		if (before.length > 0 && before.length === after.length) {
+			for (let i = 0; i < before.length; i++) {
+				const b = before[i];
+				const a = after[i];
+				if (!b || !a || a.id === b.id) continue;
+				const meta = this.plugin.store[b.id];
+				if (meta && !this.plugin.store[a.id]) {
+					delete this.plugin.store[b.id];
+					meta.cardId = a.id;
+					this.plugin.store[a.id] = meta;
+					migrated = true;
+				}
+			}
+		}
+		if (migrated) await this.plugin.saveCardStore();
+
+		const idx = before.findIndex((b) => b.id === card.id);
+		const updated = idx >= 0 ? after[idx] : undefined;
+		if (updated) {
+			Object.assign(card, updated);
+		} else {
 			card.rawContent = newContent;
 			card.front = newContent;
-			new Notice('Card edited and saved successfully.');
+			card.firstLine = (newContent.split('\n')[0] ?? '').trim();
+			card.hint = '';
+			card.lineStart = blockStart;
+			card.lineEnd = blockStart + newContent.split('\n').length - 1;
 		}
+
+		new Notice('Card edited and saved successfully.');
 	}
+}
+
+interface DeckStats {
+	all: Flashcard[];
+	due: Flashcard[];
+	completed: number;
 }
 
 export class DashboardModal extends Modal {
@@ -569,36 +770,30 @@ export class DashboardModal extends Modal {
 			text: '🔍 Scanning decks and preparing cards...',
 		});
 
-		void this.loadAndSyncCards().then(() => {
-			this.render();
-		});
+		void this.loadAndSyncCards()
+			.then(() => {
+				this.render();
+			})
+			.catch((err) => {
+				console.error('SRS dashboard scan failed:', err);
+				this.contentEl.empty();
+				this.contentEl.createEl('h2', {
+					text: '⚠️ Failed to scan decks. See the developer console.',
+				});
+			});
 	}
 
 	onClose(): void {
 		this.contentEl.empty();
 	}
 
+	// בכל פתיחה של הדשבורד (מה-ribbon או מהפקודה) מתבצעת סריקה מלאה:
+	// טעינת נתונים, פירוק כל הכרטיסים, מחיקת כרטיסים שנמחקו, והשלמת שדות חסרים
 	private async loadAndSyncCards(): Promise<void> {
-		// וידוא שהמידע המעודכן ביותר בקובץ (גם ממכשירים אחרים) טעון לפני חישוב כרטיסים
-		await this.plugin.loadAllData();
-
-		const files = this.app.vault.getMarkdownFiles();
-		this.allCards = [];
+		this.allCards = await this.plugin.scanAllCards();
 		this.cardsMap.clear();
-
-		for (const file of files) {
-			if (file.name === 'srs-data.md' || file.name === 'srs-data.json')
-				continue;
-
-			const cards = await FlashcardParser.parseFile(
-				file,
-				this.app,
-				this.plugin.settings.flashcardTags,
-			);
-			for (const c of cards) {
-				this.allCards.push(c);
-				this.cardsMap.set(c.id, c);
-			}
+		for (const c of this.allCards) {
+			this.cardsMap.set(c.id, c);
 		}
 	}
 
@@ -609,23 +804,46 @@ export class DashboardModal extends Modal {
 		contentEl.createEl('h2', { text: 'Decks to Review' });
 
 		const now = Date.now();
-		const deckMap = new Map<string, Flashcard[]>();
+		const decks = new Map<string, DeckStats>();
+		let totalCompleted = 0;
 
 		for (const card of this.allCards) {
-			const meta = this.plugin.store[card.id];
-			const isDue = !meta || meta.due <= now;
+			let stats = decks.get(card.deckName);
+			if (!stats) {
+				stats = { all: [], due: [], completed: 0 };
+				decks.set(card.deckName, stats);
+			}
+			stats.all.push(card);
 
-			if (isDue) {
-				if (!deckMap.has(card.deckName)) deckMap.set(card.deckName, []);
-				deckMap.get(card.deckName)!.push(card);
+			const meta = this.plugin.store[card.id];
+			if (meta && meta.due > now) {
+				stats.completed++;
+				totalCompleted++;
+			} else {
+				stats.due.push(card);
 			}
 		}
 
-		if (deckMap.size === 0) {
+		const totalCards = this.allCards.length;
+		const totalDue = totalCards - totalCompleted;
+
+		const summaryEl = contentEl.createDiv({ cls: 'srs-dashboard-summary' });
+		summaryEl.setCssStyles({ marginBottom: '1em', fontWeight: 'bold' });
+		summaryEl.setText(
+			`✅ Total completed: ${totalCompleted} / ${totalCards} cards   ·   ⏰ Due: ${totalDue}`,
+		);
+
+		if (decks.size === 0) {
 			contentEl.createEl('p', {
-				text: '🎉 No cards are due right now! Great job.',
+				text: 'No flashcards found.',
 			});
 		} else {
+			if (totalDue === 0) {
+				contentEl.createEl('p', {
+					text: '🎉 No cards are due right now! Great job.',
+				});
+			}
+
 			const decksContainer = contentEl.createDiv({
 				cls: 'srs-decks-container',
 			});
@@ -636,7 +854,7 @@ export class DashboardModal extends Modal {
 				marginBottom: '2em',
 			});
 
-			for (const [deckName, dueCards] of deckMap.entries()) {
+			for (const [deckName, stats] of decks.entries()) {
 				const deckCard = decksContainer.createDiv();
 				deckCard.setCssStyles({
 					border: '1px solid var(--background-modifier-border)',
@@ -651,18 +869,32 @@ export class DashboardModal extends Modal {
 				infoDiv.createEl('strong', { text: deckName });
 				infoDiv
 					.createDiv({
-						text: `${dueCards.length} cards due`,
+						text: `${stats.due.length} cards due`,
 						cls: 'srs-deck-count',
 					})
 					.setCssStyles({ fontSize: '0.85em' });
+				infoDiv
+					.createDiv({
+						text: `${stats.completed} / ${stats.all.length} completed`,
+						cls: 'srs-deck-completed',
+					})
+					.setCssStyles({ fontSize: '0.85em', opacity: '0.8' });
 
 				const startBtn = deckCard.createEl('button', {
 					text: 'Start',
 					cls: 'mod-cta',
 				});
+				if (stats.due.length === 0) {
+					startBtn.disabled = true;
+				}
 				startBtn.onclick = () => {
 					this.close();
-					new ReviewModal(this.app, this.plugin, dueCards).open();
+					new ReviewModal(
+						this.app,
+						this.plugin,
+						stats.due,
+						stats.all,
+					).open();
 				};
 			}
 		}
@@ -671,7 +903,10 @@ export class DashboardModal extends Modal {
 
 		contentEl.createEl('h2', { text: 'Reviewed Flashcards Status' });
 
-		const storeEntries = Object.values(this.plugin.store);
+		// רק כרטיסים שעדיין קיימים בפתקים (כרטיסים שנמחקו כבר נוקו בסריקה)
+		const storeEntries = Object.values(this.plugin.store).filter((m) =>
+			this.cardsMap.has(m.cardId),
+		);
 
 		if (storeEntries.length === 0) {
 			contentEl.createEl('p', {
@@ -715,11 +950,10 @@ export class DashboardModal extends Modal {
 
 		const filteredEntries = storeEntries.filter((meta) => {
 			const card = this.cardsMap.get(meta.cardId);
+			if (!card) return false;
 			if (!this.filterText) return true;
-			const frontText = card
-				? card.front.toLowerCase()
-				: meta.cardId.toLowerCase();
-			const deckText = card ? card.deckName.toLowerCase() : '';
+			const frontText = card.front.toLowerCase();
+			const deckText = card.deckName.toLowerCase();
 			return (
 				frontText.includes(this.filterText) ||
 				deckText.includes(this.filterText)
@@ -742,7 +976,14 @@ export class DashboardModal extends Modal {
 			borderBottom: '2px solid var(--background-modifier-border)',
 		});
 
-		['Card Prompt', 'Deck', 'Interval', 'Status'].forEach((h) => {
+		[
+			'Card Prompt',
+			'Deck',
+			'Interval',
+			'Reviews',
+			'Last Review',
+			'Status',
+		].forEach((h) => {
 			const th = headerRow.createEl('th', { text: h });
 			th.setCssStyles({ padding: '8px', textAlign: 'left' });
 		});
@@ -752,26 +993,45 @@ export class DashboardModal extends Modal {
 
 		for (const meta of filteredEntries) {
 			const card = this.cardsMap.get(meta.cardId);
+			if (!card) continue;
+
 			const row = tbody.createEl('tr');
 			row.setCssStyles({
 				borderBottom: '1px solid var(--background-modifier-border)',
 			});
 
+			const promptText = displayFront(card);
 			const tdPrompt = row.createEl('td');
 			tdPrompt.setCssStyles({ padding: '8px' });
-			tdPrompt.textContent = card
-				? card.front.length > 45
-					? card.front.substring(0, 45) + '...'
-					: card.front
-				: 'Unknown (Deleted)';
+			tdPrompt.textContent =
+				promptText.length > 45
+					? promptText.substring(0, 45) + '...'
+					: promptText;
 
 			const tdDeck = row.createEl('td');
 			tdDeck.setCssStyles({ padding: '8px' });
-			tdDeck.textContent = card ? card.deckName : 'Unknown';
+			tdDeck.textContent = card.deckName;
 
 			const tdInterval = row.createEl('td');
 			tdInterval.setCssStyles({ padding: '8px' });
 			tdInterval.textContent = SRSEngine.formatInterval(meta.interval);
+
+			const history = meta.reviewHistory ?? [];
+			const tdReviews = row.createEl('td');
+			tdReviews.setCssStyles({ padding: '8px' });
+			tdReviews.textContent = String(meta.reviewCount ?? history.length);
+			if (history.length > 0) {
+				// ריחוף עם העכבר מציג את תאריכי ושעות הביצוע (30 האחרונים)
+				tdReviews.title = history
+					.slice(-30)
+					.map((t) => formatDateTime(t))
+					.join('\n');
+			}
+
+			const lastTs = history[history.length - 1] ?? meta.lastReview;
+			const tdLast = row.createEl('td');
+			tdLast.setCssStyles({ padding: '8px' });
+			tdLast.textContent = lastTs ? formatDateTime(lastTs) : '-';
 
 			const tdStatus = row.createEl('td');
 			tdStatus.setCssStyles({ padding: '8px' });
@@ -958,6 +1218,89 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		this.store = newStore;
 	}
 
+	// ------------------------------------------------------------------------
+	// סריקה מלאה - נקראת בכל פתיחה של הדשבורד
+	// ------------------------------------------------------------------------
+	async scanAllCards(): Promise<Flashcard[]> {
+		// וידוא שהמידע המעודכן ביותר בקובץ (גם ממכשירים אחרים) טעון לפני חישוב כרטיסים
+		await this.loadAllData();
+
+		const files = this.app.vault.getMarkdownFiles();
+		const allCards: Flashcard[] = [];
+
+		for (const file of files) {
+			if (file.name === 'srs-data.md' || file.name === 'srs-data.json')
+				continue;
+
+			const cards = await FlashcardParser.parseFile(
+				file,
+				this.app,
+				this.settings.flashcardTags,
+				this.settings.hintTags,
+			);
+			allCards.push(...cards);
+		}
+
+		if (this.syncStoreWithCards(allCards)) {
+			await this.saveCardStore();
+		}
+
+		return allCards;
+	}
+
+	// מוחק מה-store כרטיסים שנמחקו מהפתקים, ומשלים שדות חסרים (היסטוריית ביצועים).
+	// מחזיר true אם משהו השתנה ויש לשמור.
+	private syncStoreWithCards(allCards: Flashcard[]): boolean {
+		let changed = false;
+		const existingIds = new Set(allCards.map((c) => c.id));
+
+		// הגנה: אם לא נמצא אף כרטיס בכל הכספת (למשל הכספת עוד לא נטענה במלואה / סנכרון חלקי)
+		// לא מוחקים כלום, כדי לא לאבד נתונים בטעות
+		const canPrune =
+			allCards.length > 0 || Object.keys(this.store).length === 0;
+
+		for (const [id, meta] of Object.entries(this.store)) {
+			if (canPrune && !existingIds.has(id)) {
+				delete this.store[id];
+				changed = true;
+				continue;
+			}
+			if (this.ensureMetaFields(id, meta)) changed = true;
+		}
+
+		return changed;
+	}
+
+	private ensureMetaFields(
+		id: string,
+		meta: CardSchedulingMetadata,
+	): boolean {
+		let changed = false;
+
+		if (meta.cardId !== id) {
+			meta.cardId = id;
+			changed = true;
+		}
+
+		// כרטיסים שנבדקו לפני שהתווספה ההיסטוריה: נשמר מועד הבדיקה האחרון הידוע
+		if (!Array.isArray(meta.reviewHistory)) {
+			meta.reviewHistory = meta.lastReview ? [meta.lastReview] : [];
+			changed = true;
+		}
+
+		// מספר הפעמים: הערכה לפי מונה החזרות הקיים (לכרטיסים ישנים בלבד)
+		if (typeof meta.reviewCount !== 'number') {
+			meta.reviewCount = Math.max(
+				meta.repetition || 0,
+				meta.reviewHistory.length,
+				1,
+			);
+			changed = true;
+		}
+
+		return changed;
+	}
+
 	async saveSettings(): Promise<void> {
 		await this.saveData(this.settings);
 	}
@@ -1020,6 +1363,8 @@ export default class SpacedRepetitionPlugin extends Plugin {
 			return;
 		}
 
+		const mode = this.settings.duplicateMode;
+
 		const content = await this.app.vault.read(file);
 		const lines = content.replace(/\r\n/g, '\n').split('\n');
 
@@ -1053,7 +1398,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 			for (let j = 0; j < group.length; j++) {
 				const trimmed = cleanStr(group[j]);
 				if (trimmed === '?' || trimmed === '??') {
-					delimiter = group[j]!.trim();
+					delimiter = trimmed;
 					delimiterIdx = j;
 					break;
 				}
@@ -1062,15 +1407,32 @@ export default class SpacedRepetitionPlugin extends Plugin {
 			if (delimiterIdx !== -1) {
 				const frontLines = group.slice(0, delimiterIdx);
 				const backLines = group.slice(delimiterIdx + 1);
-				const rawKey = cleanStr(frontLines.join(' ')).toLowerCase();
 
-				if (rawKey !== '' && seenKeys.has(rawKey)) {
+				const frontKeys = frontLines
+					.map(normalizeForCompare)
+					.filter((l) => l !== '');
+				const backKeys = backLines
+					.map(normalizeForCompare)
+					.filter((l) => l !== '');
+
+				// מפתח ההשוואה:
+				// firstLine - רק השורה הראשונה של הכרטיס (בין המקף הפותח לשורה השנייה),
+				//             כך ששני כרטיסים עם אותה שורה ראשונה אך רמז/תשובה שונים נחשבים כפילות
+				// exact     - כל תוכן הכרטיס (שאלה + רמז + סוג המפריד + תשובה)
+				let key = '';
+				if (mode === 'firstLine') {
+					key = frontKeys[0] ?? '';
+				} else if (frontKeys.length > 0 || backKeys.length > 0) {
+					key = `${frontKeys.join('\n')}\u0001${delimiter}\u0001${backKeys.join('\n')}`;
+				}
+
+				if (key !== '' && seenKeys.has(key)) {
 					duplicatesCount++;
 					continue;
 				}
 
-				if (rawKey !== '') {
-					seenKeys.add(rawKey);
+				if (key !== '') {
+					seenKeys.add(key);
 				}
 
 				const cleanedFront = frontLines.filter(
@@ -1092,13 +1454,16 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		const finalContent = outLines.join('\n');
 		await this.app.vault.modify(file, finalContent);
 
+		const modeLabel =
+			mode === 'firstLine' ? 'same first line' : 'identical content';
+
 		if (duplicatesCount > 0) {
 			new Notice(
-				`Cards formatting updated and removed ${duplicatesCount} duplicate card(s).`,
+				`Cards formatting updated and removed ${duplicatesCount} duplicate card(s) (${modeLabel}).`,
 			);
 		} else {
 			new Notice(
-				'Cards formatting fixed successfully! Internal spaces removed based on dash boundaries.',
+				`Cards formatting fixed successfully! No duplicates found (${modeLabel}).`,
 			);
 		}
 	}
