@@ -9,6 +9,29 @@ import SpacedRepetitionPlugin from './main';
 
 export type DuplicateMode = 'exact' | 'firstLine';
 
+// ---- Blast game (נתונים נשמרים בקובץ blast-data.md) ----
+export interface BlastData {
+	highScore: number;
+	bestStreak: number;
+	games: number;
+	// משחק Match: הזמן הטוב ביותר (בשניות) לכל חפיסה, ומספר המשחקים
+	matchBest: Record<string, number>;
+	matchGames: number;
+	// משחק Hangman: הרצף הטוב ביותר לכל חפיסה, ומספר המשחקים
+	hangmanBest: Record<string, number>;
+	hangmanGames: number;
+}
+
+export const defaultBlastData = (): BlastData => ({
+	highScore: 0,
+	bestStreak: 0,
+	games: 0,
+	matchBest: {},
+	matchGames: 0,
+	hangmanBest: {},
+	hangmanGames: 0,
+});
+
 export interface SpacedRepetitionSettings {
 	algorithm: 'FSRS' | 'SM2';
 	requestRetention: number;
@@ -19,6 +42,12 @@ export interface SpacedRepetitionSettings {
 	duplicateMode: DuplicateMode;
 	showIntervalOnButtons: boolean;
 	dataFolderPath: string;
+	// ---- Blast game (העדפות; נתוני המשחק נשמרים ב-blast-data.md) ----
+	blastSound: boolean;
+	// תיקייה לקובץ blast-data.md. ריק = אותה תיקייה של srs-data.md
+	blastDataFolderPath: string;
+	// שדה ישן (גרסה קודמת) - מועבר אוטומטית ל-blast-data.md
+	blastHighScore?: number;
 }
 
 export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
@@ -34,6 +63,8 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	duplicateMode: 'exact',
 	showIntervalOnButtons: true,
 	dataFolderPath: 'SRS-Data',
+	blastSound: true,
+	blastDataFolderPath: '',
 };
 
 // מחלקה המציגה רשימת תיקיות קיימות מהכספת עם אפשרות חיפוש
@@ -132,8 +163,7 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.algorithm)
 					.onChange(async (value) => {
 						this.plugin.settings.algorithm = value as
-							| 'FSRS'
-							| 'SM2';
+							'FSRS' | 'SM2';
 						await this.plugin.saveSettings();
 						this.display();
 					}),
@@ -289,6 +319,71 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 						this.plugin.settings.duplicateMode =
 							value === 'firstLine' ? 'firstLine' : 'exact';
 						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Games')
+			.setDesc(
+				'Blast and Match are practice only. They never change your review schedule.',
+			)
+			.setHeading();
+
+		new Setting(containerEl)
+			.setName('Blast Sound Effects')
+			.setDesc('Play laser and explosion sounds in the Blast game.')
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.blastSound)
+					.onChange(async (value) => {
+						this.plugin.settings.blastSound = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Blast Data Folder Path')
+			.setDesc(
+				'Folder for blast-data.md (Blast high score and streak, Match best times, Hangman best streaks, games played). Leave empty to keep it next to the card data (same folder as srs-data.md).',
+			)
+			.addText((text) => {
+				text.setPlaceholder('Same as card data')
+					.setValue(this.plugin.settings.blastDataFolderPath)
+					.onChange(async (value) => {
+						this.plugin.settings.blastDataFolderPath = value;
+						await this.plugin.saveSettings();
+					});
+				new FolderSuggest(this.app, text.inputEl);
+			});
+
+		new Setting(containerEl)
+			.setName('Apply Blast Data Location')
+			.setDesc(
+				`Click to write the Blast data to: ${this.plugin.getBlastDataFilePath()}`,
+			)
+			.addButton((btn) =>
+				btn
+					.setButtonText('Apply')
+					.setCta()
+					.onClick(async () => {
+						await this.plugin.applyBlastDataLocation();
+						this.display();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Reset Game Data')
+			.setDesc(
+				`Blast - high score: ${this.plugin.blastData.highScore} · Best streak: ${this.plugin.blastData.bestStreak} · Games: ${this.plugin.blastData.games}. Match - games: ${this.plugin.blastData.matchGames}. Hangman - games: ${this.plugin.blastData.hangmanGames}. Resetting also clears the Match best times and Hangman best streaks.`,
+			)
+			.addButton((btn) =>
+				btn
+					.setButtonText('Reset')
+					.setWarning()
+					.onClick(async () => {
+						this.plugin.blastData = defaultBlastData();
+						await this.plugin.saveBlastData();
+						this.display();
 					}),
 			);
 

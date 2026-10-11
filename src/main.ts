@@ -11,7 +11,12 @@ import {
 	SpacedRepetitionSettings,
 	DEFAULT_SETTINGS,
 	SpacedRepetitionSettingTab,
+	BlastData,
+	defaultBlastData,
 } from './settings';
+import { BlastModal } from './blast';
+import { MatchModal } from './match';
+import { HangmanModal } from './hangman';
 
 export const cleanStr = (s: string | undefined): string => {
 	if (s === undefined) return '';
@@ -912,6 +917,7 @@ export class DashboardModal extends Modal {
 			contentEl.createEl('p', {
 				text: 'No cards have been reviewed yet.',
 			});
+			this.renderGames(contentEl);
 			return;
 		}
 
@@ -939,6 +945,55 @@ export class DashboardModal extends Modal {
 		};
 
 		this.renderTable(tableContainer, storeEntries);
+		this.renderGames(contentEl);
+	}
+
+	// קטגוריית משחקים בתחתית הדשבורד (משחקי עזר בלבד)
+	private renderGames(parent: HTMLElement): void {
+		parent.createEl('hr');
+		parent.createEl('h2', { text: 'Games' });
+
+		const addGame = (
+			name: string,
+			desc: string,
+			open: () => void,
+		): void => {
+			const row = parent.createDiv();
+			row.setCssStyles({
+				border: '1px solid var(--background-modifier-border)',
+				padding: '12px',
+				borderRadius: '8px',
+				display: 'flex',
+				justifyContent: 'space-between',
+				alignItems: 'center',
+				marginBottom: '10px',
+			});
+
+			const info = row.createDiv();
+			info.createEl('strong', { text: name });
+			info.createDiv({ text: desc }).setCssStyles({
+				fontSize: '0.85em',
+				opacity: '0.8',
+			});
+
+			const openBtn = row.createEl('button', { text: 'Open' });
+			openBtn.onclick = () => {
+				this.close();
+				open();
+			};
+		};
+
+		addGame('🚀 Blast', 'Shoot the asteroid with the right answer', () =>
+			new BlastModal(this.app, this.plugin).open(),
+		);
+		addGame(
+			'🧩 Match',
+			'Match questions with answers as fast as you can',
+			() => new MatchModal(this.app, this.plugin).open(),
+		);
+		addGame('🪢 Hangman', 'Guess the hidden answer letter by letter', () =>
+			new HangmanModal(this.app, this.plugin).open(),
+		);
 	}
 
 	private renderTable(
@@ -1080,11 +1135,14 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	settings!: SpacedRepetitionSettings;
 	store: Record<string, CardSchedulingMetadata> = {};
 	isSaving: boolean = false; // דגל למניעת לולאת רענון בעת שמירה
+	blastData: BlastData = defaultBlastData();
+	isSavingBlast: boolean = false;
 
 	async onload(): Promise<void> {
 		// מוודא שהכספת טעונה במלואה לפני ניסיון הקריאה מהקובץ
 		this.app.workspace.onLayoutReady(async () => {
 			await this.loadAllData();
+			await this.loadBlastData();
 		});
 
 		// מאזין לשינויים בקובץ ברקע (עבור סנכרון עם הטלפון / LiveSync)
@@ -1092,6 +1150,12 @@ export default class SpacedRepetitionPlugin extends Plugin {
 			this.app.vault.on('modify', async (file) => {
 				if (file.path === this.getDataFilePath() && !this.isSaving) {
 					await this.loadAllData();
+				}
+				if (
+					file.path === this.getBlastDataFilePath() &&
+					!this.isSavingBlast
+				) {
+					await this.loadBlastData();
 				}
 			}),
 		);
@@ -1109,6 +1173,30 @@ export default class SpacedRepetitionPlugin extends Plugin {
 			name: 'Open Spaced Repetition Dashboard',
 			callback: () => {
 				new DashboardModal(this.app, this).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'open-blast-game',
+			name: 'Play Blast Game',
+			callback: () => {
+				new BlastModal(this.app, this).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'open-match-game',
+			name: 'Play Match Game',
+			callback: () => {
+				new MatchModal(this.app, this).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'open-hangman-game',
+			name: 'Play Hangman Game',
+			callback: () => {
+				new HangmanModal(this.app, this).open();
 			},
 		});
 
@@ -1229,7 +1317,11 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		const allCards: Flashcard[] = [];
 
 		for (const file of files) {
-			if (file.name === 'srs-data.md' || file.name === 'srs-data.json')
+			if (
+				file.name === 'srs-data.md' ||
+				file.name === 'srs-data.json' ||
+				file.name === 'blast-data.md'
+			)
 				continue;
 
 			const cards = await FlashcardParser.parseFile(
@@ -1305,6 +1397,133 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		await this.saveData(this.settings);
 	}
 
+	// ------------------------------------------------------------------------
+	// נתוני משחק Blast - קובץ md נפרד (ברירת מחדל: ליד srs-data.md)
+	// ------------------------------------------------------------------------
+	public getBlastDataFilePath(): string {
+		const own = this.settings?.blastDataFolderPath ?? '';
+		const raw =
+			own.trim() !== '' ? own : (this.settings?.dataFolderPath ?? '');
+		const folder = raw.trim().replace(/^\/+|\/+$/g, '');
+		return folder ? `${folder}/blast-data.md` : 'blast-data.md';
+	}
+
+	private getVaultBlastFile(): TFile | null {
+		const file = this.app.vault.getAbstractFileByPath(
+			this.getBlastDataFilePath(),
+		);
+		if (file instanceof TFile) return file;
+		const files = this.app.vault.getFiles();
+		return files.find((f) => f.name === 'blast-data.md') || null;
+	}
+
+	async loadBlastData(): Promise<void> {
+		let data = defaultBlastData();
+		let migrated = false;
+		const file = this.getVaultBlastFile();
+
+		if (file instanceof TFile) {
+			try {
+				const content = await this.app.vault.read(file);
+				const match = content.match(/```json\s+([\s\S]*?)\s+```/);
+				let parsed: unknown = null;
+				if (match && match[1]) {
+					parsed = JSON.parse(match[1]);
+				} else {
+					try {
+						parsed = JSON.parse(content);
+					} catch {
+						console.warn('Blast data file is not valid JSON');
+					}
+				}
+				if (parsed && typeof parsed === 'object') {
+					const p = parsed as Partial<BlastData>;
+					data = {
+						highScore:
+							typeof p.highScore === 'number' ? p.highScore : 0,
+						bestStreak:
+							typeof p.bestStreak === 'number' ? p.bestStreak : 0,
+						games: typeof p.games === 'number' ? p.games : 0,
+						matchBest: {},
+						matchGames:
+							typeof p.matchGames === 'number' ? p.matchGames : 0,
+						hangmanBest: {},
+						hangmanGames:
+							typeof p.hangmanGames === 'number'
+								? p.hangmanGames
+								: 0,
+					};
+					const readMap = (
+						src: unknown,
+						dst: Record<string, number>,
+					): void => {
+						if (!src || typeof src !== 'object') return;
+						for (const [k, v] of Object.entries(src)) {
+							if (typeof v === 'number') dst[k] = v;
+						}
+					};
+					readMap(p.matchBest, data.matchBest);
+					readMap(p.hangmanBest, data.hangmanBest);
+				}
+			} catch (err) {
+				console.error('Error reading Blast data file:', err);
+				// לא דורסים את הזיכרון כדי לא לאבד נתונים
+				return;
+			}
+		} else if ((this.settings?.blastHighScore ?? 0) > 0) {
+			// מעבר מהגרסה הקודמת: השיא היה שמור ב-data.json
+			data.highScore = this.settings.blastHighScore ?? 0;
+			migrated = true;
+		}
+
+		this.blastData = data;
+
+		if (migrated) {
+			await this.saveBlastData();
+			delete this.settings.blastHighScore;
+			await this.saveSettings();
+		}
+	}
+
+	async saveBlastData(): Promise<void> {
+		this.isSavingBlast = true;
+		try {
+			const filePath = this.getBlastDataFilePath();
+			const slash = filePath.lastIndexOf('/');
+			if (slash > 0) {
+				await this.ensureFolderExists(filePath.substring(0, slash));
+			}
+
+			const jsonString = JSON.stringify(this.blastData, null, 2);
+			const markdownContent = `---\ntags: [blast-game-data]\n---\n# Blast Game Data\n\n> ⚠️ **Warning:** Do not edit this file manually unless you know what you are doing. The Blast game reads and writes directly from the code block below.\n\n\`\`\`json\n${jsonString}\n\`\`\`\n`;
+
+			const file = this.app.vault.getAbstractFileByPath(filePath);
+			if (file instanceof TFile) {
+				await this.app.vault.modify(file, markdownContent);
+			} else {
+				const oldFile = this.getVaultBlastFile();
+				if (oldFile && oldFile.path !== filePath) {
+					try {
+						await this.app.fileManager.trashFile(oldFile);
+					} catch {
+						// Ignored: File could not be trashed
+					}
+				}
+				await this.app.vault.create(filePath, markdownContent);
+			}
+		} finally {
+			window.setTimeout(() => {
+				this.isSavingBlast = false;
+			}, 1000);
+		}
+	}
+
+	async applyBlastDataLocation(): Promise<void> {
+		await this.saveSettings();
+		await this.saveBlastData();
+		new Notice(`Blast data saved to: ${this.getBlastDataFilePath()}`);
+	}
+
 	async saveCardStore(): Promise<void> {
 		this.isSaving = true;
 		try {
@@ -1351,6 +1570,8 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	async applyDataLocation(): Promise<void> {
 		await this.saveSettings();
 		await this.saveCardStore();
+		// קובץ ה-Blast עוקב אחרי תיקיית הכרטיסים אם לא הוגדר לו נתיב משלו
+		await this.saveBlastData();
 		new Notice(
 			`Data location applied!\nSaved settings to plugin data.json and card data to: ${this.getDataFilePath()}`,
 		);
