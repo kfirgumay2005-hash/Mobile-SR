@@ -62,8 +62,7 @@ function anim(
 	delay = 0,
 ): void {
 	const a = el(tag, { ...attrs, begin: 'indefinite' }, target);
-	const x = a as unknown as SVGAnimationElement;
-	if (typeof x.beginElementAt === 'function') x.beginElementAt(delay);
+	if (typeof a.beginElementAt === 'function') a.beginElementAt(delay);
 }
 
 function txt(
@@ -299,10 +298,13 @@ function buildAsteroid(
 	const startY = -((lines.length - 1) * lh) / 2 + size * 0.34;
 	lines.forEach((ln, i) => {
 		const t = txt(g, 0, startY + i * lh, ln, size, '#ffffff');
-		t.setAttribute(
-			'style',
-			'paint-order:stroke;stroke:#000;stroke-width:2.6px;stroke-linejoin:round;unicode-bidi:plaintext;',
-		);
+		t.setCssStyles({
+			paintOrder: 'stroke',
+			stroke: '#000',
+			strokeWidth: '2.6px',
+			strokeLinejoin: 'round',
+			unicodeBidi: 'plaintext',
+		});
 	});
 	return { g, rock };
 }
@@ -580,10 +582,14 @@ export class BlastModal extends Modal {
 		});
 
 		const svg = el('svg', { viewBox: `0 0 ${W} ${H}`, width: '100%' });
-		svg.setAttribute(
-			'style',
-			'max-width:420px;display:block;margin:0 auto;touch-action:none;user-select:none;border-radius:12px;',
-		);
+		svg.setCssStyles({
+			maxWidth: '420px',
+			display: 'block',
+			margin: '0 auto',
+			touchAction: 'none',
+			userSelect: 'none',
+			borderRadius: '12px',
+		});
 		this.gameEl.appendChild(svg);
 		this.svg = svg;
 
@@ -1735,10 +1741,12 @@ export class BlastModal extends Modal {
 		dur = 0.9,
 	): void {
 		const t = txt(this.fxLayer, x, y, text, size, fill);
-		t.setAttribute(
-			'style',
-			'paint-order:stroke;stroke:#000;stroke-width:3px;stroke-linejoin:round;',
-		);
+		t.setCssStyles({
+			paintOrder: 'stroke',
+			stroke: '#000',
+			strokeWidth: '3px',
+			strokeLinejoin: 'round',
+		});
 		anim(t, 'animate', {
 			attributeName: 'y',
 			from: y,
