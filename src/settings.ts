@@ -1,11 +1,14 @@
 import {
 	AbstractInputSuggest,
 	App,
+	Notice,
 	PluginSettingTab,
 	Setting,
 	TFolder,
 } from 'obsidian';
 import SpacedRepetitionPlugin from './main';
+import type { GameId, GameMusicConfig } from './music';
+import { USERNAME_RE, onlineAvailable, registerUsername } from './online';
 
 export type DuplicateMode = 'exact' | 'firstLine';
 
@@ -20,6 +23,14 @@ export interface BlastData {
 	// משחק Hangman: הרצף הטוב ביותר לכל חפיסה, ומספר המשחקים
 	hangmanBest: Record<string, number>;
 	hangmanGames: number;
+	// משחק Aliens: הניקוד הגבוה ביותר ומספר המשחקים
+	aliensHigh: number;
+	aliensGames: number;
+	// הזמן המהיר ביותר (בשניות) שבו המשחק הושלם; 0 = עדיין לא הושלם
+	aliensBestTime: number;
+	// משחק Sword: הזמן המהיר ביותר ומספר המשחקים
+	swordBest: number;
+	swordGames: number;
 }
 
 export const defaultBlastData = (): BlastData => ({
@@ -30,6 +41,11 @@ export const defaultBlastData = (): BlastData => ({
 	matchGames: 0,
 	hangmanBest: {},
 	hangmanGames: 0,
+	aliensHigh: 0,
+	aliensGames: 0,
+	aliensBestTime: 0,
+	swordBest: 0,
+	swordGames: 0,
 });
 
 export interface SpacedRepetitionSettings {
@@ -48,6 +64,25 @@ export interface SpacedRepetitionSettings {
 	blastDataFolderPath: string;
 	// שדה ישן (גרסה קודמת) - מועבר אוטומטית ל-blast-data.md
 	blastHighScore?: number;
+	// ---- פתיחת עיצובים וכלי נשק לפי ההתקדמות ב-review (ראו rewards.ts) ----
+	rewardMetric: 'completed' | 'recent';
+	// הבחירה בכל משחק; -1 = תמיד הטוב ביותר שפתוח
+	blastShip: number;
+	matchTheme: number;
+	hangmanTheme: number;
+	aliensWeapon: number;
+	swordBlade: number;
+	// ---- מוזיקת רקע (ראו music.ts) ----
+	// מפתח סודי שפותח את כל העיצובים וכלי הנשק (ראו rewards.ts). אין לו ממשק
+	unlockKey?: string;
+	musicVolume: number;
+	// ---- טבלת שיאים משותפת (ראו online.ts); כבוי כברירת מחדל ----
+	onlineShare: boolean;
+	// שם המשתמש הקבוע (נרשם בשרת פעם אחת) והשם המוצג (חופשי)
+	onlineUsername?: string;
+	onlineName: string;
+	onlineId?: string;
+	gameMusic?: Partial<Record<GameId, GameMusicConfig>>;
 }
 
 export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
@@ -65,6 +100,15 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	dataFolderPath: 'SRS-Data',
 	blastSound: true,
 	blastDataFolderPath: '',
+	rewardMetric: 'completed',
+	blastShip: -1,
+	matchTheme: -1,
+	hangmanTheme: -1,
+	aliensWeapon: -1,
+	swordBlade: -1,
+	musicVolume: 0.5,
+	onlineShare: false,
+	onlineName: '',
 };
 
 // מחלקה המציגה רשימת תיקיות קיימות מהכספת עם אפשרות חיפוש
@@ -325,13 +369,13 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('Games')
 			.setDesc(
-				'Blast and Match are practice only. They never change your review schedule.',
+				'The games are practice only. They never change your review schedule. Music is set up inside each game, under Music in its menu.',
 			)
 			.setHeading();
 
 		new Setting(containerEl)
-			.setName('Blast Sound Effects')
-			.setDesc('Play laser and explosion sounds in the Blast game.')
+			.setName('Game sound effects')
+			.setDesc('Play sound effects in the action games.')
 			.addToggle((toggle) =>
 				toggle
 					.setValue(this.plugin.settings.blastSound)
@@ -342,9 +386,118 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 			);
 
 		new Setting(containerEl)
+			.setName('Unlocks are based on')
+			.setDesc(
+				'Your regular reviews unlock ships, card and figure designs, weapons and swords in the games. Choose what is counted: every 50 opens the next item. An unlock is lost again when the number drops below its requirement.',
+			)
+			.addDropdown((dropdown) =>
+				dropdown
+					.addOption('completed', 'Cards reviewed and not due')
+					.addOption('recent', 'Reviews in the last 24 hours')
+					.setValue(this.plugin.settings.rewardMetric)
+					.onChange(async (value) => {
+						this.plugin.settings.rewardMetric =
+							value === 'recent' ? 'recent' : 'completed';
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		if (onlineAvailable()) {
+			const username = this.plugin.settings.onlineUsername ?? '';
+
+			if (username === '') {
+				// שם המשתמש נבחר פעם אחת וננעל; עד אז השיתוף נעול
+				let wanted = '';
+				new Setting(containerEl)
+					.setName('Leaderboard username')
+					.setDesc(
+						'Choose a username to unlock sharing. It is unique, it is shown next to your results, and once you lock it it can never be changed. Use 3 to 16 characters: a-z, 0-9 and underscore. Your display name stays free to change.',
+					)
+					.addText((text) =>
+						text.onChange((value) => {
+							wanted = value;
+						}),
+					)
+					.addButton((btn) =>
+						btn
+							.setButtonText('Lock username')
+							.setWarning()
+							.onClick(async () => {
+								const name = wanted.trim().toLowerCase();
+								if (!USERNAME_RE.test(name)) {
+									new Notice(
+										'A username is 3 to 16 characters: a-z, 0-9 and underscore.',
+									);
+									return;
+								}
+								btn.setDisabled(true);
+								const error = await registerUsername(
+									this.plugin,
+									name,
+								);
+								if (error) {
+									new Notice(error);
+									btn.setDisabled(false);
+									return;
+								}
+								new Notice(
+									`Username locked: ${this.plugin.settings.onlineUsername ?? name}`,
+								);
+								this.display();
+							}),
+					);
+			} else {
+				new Setting(containerEl)
+					.setName('Leaderboard username')
+					.setDesc(
+						'Your permanent username. It cannot be changed. It is tied to this device through an ID saved in the plugin settings, so keep that file if you reinstall.',
+					)
+					.addText((text) =>
+						text.setValue(username).setDisabled(true),
+					);
+
+				new Setting(containerEl)
+					.setName('Display name')
+					.setDesc(
+						'The name shown on the leaderboard, above your username. Change it whenever you like (up to 20 characters); the new name appears after your next game.',
+					)
+					.addText((text) =>
+						text
+							.setPlaceholder(username)
+							.setValue(this.plugin.settings.onlineName)
+							.onChange(async (value) => {
+								this.plugin.settings.onlineName = value
+									.trim()
+									.substring(0, 20);
+								await this.plugin.saveSettings();
+							}),
+					);
+			}
+
+			new Setting(containerEl)
+				.setName('Share my records online')
+				.setDesc(
+					username === ''
+						? 'Locked until you choose a username above.'
+						: 'Off by default. When on, finishing a game sends your display name, the result and the weapon, sword or ship you used to the shared leaderboard, together with a random ID created on this device. Every finished game counts, including one lost on the first level. Nothing from your notes, cards or review schedule is ever sent.',
+				)
+				.addToggle((toggle) =>
+					toggle
+						.setValue(
+							username !== '' && this.plugin.settings.onlineShare,
+						)
+						.setDisabled(username === '')
+						.onChange(async (value) => {
+							this.plugin.settings.onlineShare = value;
+							await this.plugin.saveSettings();
+						}),
+				);
+		}
+
+		new Setting(containerEl)
 			.setName('Blast Data Folder Path')
 			.setDesc(
-				'Folder for blast-data.md (Blast high score and streak, Match best times, Hangman best streaks, games played). Leave empty to keep it next to the card data (same folder as srs-data.md).',
+				'Folder for blast-data.md (records of all the games) and for the game-music folder. Leave empty to keep them next to the card data (same folder as srs-data.md).',
 			)
 			.addText((text) => {
 				text.setPlaceholder('Same as card data')
@@ -374,7 +527,7 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
 			.setName('Reset Game Data')
 			.setDesc(
-				`Blast - high score: ${this.plugin.blastData.highScore} · Best streak: ${this.plugin.blastData.bestStreak} · Games: ${this.plugin.blastData.games}. Match - games: ${this.plugin.blastData.matchGames}. Hangman - games: ${this.plugin.blastData.hangmanGames}. Resetting also clears the Match best times and Hangman best streaks.`,
+				`Blast - high score: ${this.plugin.blastData.highScore} · Best streak: ${this.plugin.blastData.bestStreak} · Games: ${this.plugin.blastData.games}. Match - games: ${this.plugin.blastData.matchGames}. Hangman - games: ${this.plugin.blastData.hangmanGames}. Aliens - high score: ${this.plugin.blastData.aliensHigh} · Games: ${this.plugin.blastData.aliensGames}. Sword - games: ${this.plugin.blastData.swordGames}. Resetting also clears the Match best times, Hangman best streaks, and the Aliens and Sword best times.`,
 			)
 			.addButton((btn) =>
 				btn

@@ -1,6 +1,9 @@
 import { App, Component, MarkdownRenderer, Modal, Notice } from 'obsidian';
 import type SpacedRepetitionPlugin from './main';
 import type { Flashcard } from './main';
+import { GameMusic, renderMusicPanel } from './music';
+import { renderLeaderboardButton, submitScore } from './online';
+import { effectivePick, renderRewardPicker, rewardTier } from './rewards';
 
 // ============================================================================
 // Blast - משחק בסגנון Quizlet Blast
@@ -309,102 +312,270 @@ function buildAsteroid(
 	return { g, rock };
 }
 
-function buildShip(parent: Element): void {
-	const flame = el(
-		'polygon',
-		{ points: '-8,20 0,46 8,20', fill: 'url(#bl-flame)' },
-		parent,
+// גרדיאנט מקומי: מוגדר בתוך האלמנט עצמו, כך שאותו ציור עובד גם בזירה וגם
+// בתצוגה המקדימה שבתפריט
+let gradSeq = 0;
+function localGrad(
+	parent: Element,
+	colors: string[],
+	horizontal = false,
+): string {
+	const id = `bl-lg${gradSeq++}`;
+	const defs = el('defs', {}, parent);
+	const g = el(
+		'linearGradient',
+		{ id, x1: 0, y1: 0, x2: horizontal ? 1 : 0, y2: horizontal ? 0 : 1 },
+		defs,
 	);
-	anim(flame, 'animate', {
-		attributeName: 'opacity',
-		values: '1;0.5;1',
-		dur: '0.16s',
-		repeatCount: 'indefinite',
-	});
-	const flame2 = el(
-		'polygon',
-		{ points: '-4,20 0,34 4,20', fill: '#fff8c4' },
-		parent,
+	colors.forEach((c, i) =>
+		el(
+			'stop',
+			{
+				offset: colors.length > 1 ? i / (colors.length - 1) : 0,
+				'stop-color': c,
+			},
+			g,
+		),
 	);
-	anim(flame2, 'animate', {
-		attributeName: 'opacity',
-		values: '0.9;0.4;0.9',
-		dur: '0.12s',
-		repeatCount: 'indefinite',
-	});
+	return `url(#${id})`;
+}
+
+// עיצובי החללית. עיצוב i נפתח בדרגה i (ראו rewards.ts)
+interface ShipSkin {
+	name: string;
+	laser: string;
+	hull: string; // path
+	wing: string; // נקודות הכנף הימנית; השמאלית היא תמונת ראי
+	hullColors: string[];
+	wingColors: string[];
+	glassColors: string[];
+	flameColors: string[];
+	trim: string;
+	outline: string;
+	flames: number[]; // מיקומי המנועים על ציר X
+	extra?: (parent: Element, skin: ShipSkin) => void;
+}
+
+export const SHIP_SKINS: ShipSkin[] = [
+	{
+		name: 'Scout',
+		laser: '#ff5252',
+		hull: 'M0 -42 C11 -28 15 -8 13 24 L-13 24 C-15 -8 -11 -28 0 -42 Z',
+		wing: '11,-2 36,26 36,36 10,24',
+		hullColors: ['#eceff1', '#90a4ae'],
+		wingColors: ['#5c6bc0', '#1a237e'],
+		glassColors: ['#b3e5fc', '#0288d1'],
+		flameColors: ['#fff176', '#ff9100', '#d50000'],
+		trim: '#ff5252',
+		outline: '#0d1b3a',
+		flames: [0],
+		extra: (p, s) => {
+			for (const x of [-38, 33]) {
+				el(
+					'rect',
+					{ x, y: 30, width: 5, height: 9, rx: 2, fill: s.trim },
+					p,
+				);
+			}
+		},
+	},
+	{
+		name: 'Viper',
+		laser: '#ffd600',
+		hull: 'M0 -44 L8 -14 L11 24 L-11 24 L-8 -14 Z',
+		wing: '9,6 34,-10 38,-6 30,22 10,26',
+		hullColors: ['#ff8a80', '#b71c1c'],
+		wingColors: ['#616161', '#111111'],
+		glassColors: ['#fff59d', '#f57f17'],
+		flameColors: ['#ffffff', '#ffd600', '#ff3d00'],
+		trim: '#ffd600',
+		outline: '#1a0505',
+		flames: [-6, 6],
+		extra: (p, s) => {
+			for (const x of [-36, 36]) {
+				el(
+					'path',
+					{
+						d: `M${x} -8 V-22`,
+						stroke: s.trim,
+						'stroke-width': 2.5,
+						'stroke-linecap': 'round',
+					},
+					p,
+				);
+			}
+		},
+	},
+	{
+		name: 'Falcon',
+		laser: '#69f0ae',
+		hull: 'M0 -40 C8 -30 10 -10 10 24 L-10 24 C-10 -10 -8 -30 0 -40 Z',
+		wing: '8,-18 40,30 22,30 9,24',
+		hullColors: ['#f1f8e9', '#66bb6a'],
+		wingColors: ['#43a047', '#1b5e20'],
+		glassColors: ['#e0f7fa', '#00acc1'],
+		flameColors: ['#e8f5e9', '#69f0ae', '#00c853'],
+		trim: '#ffd54f',
+		outline: '#0b2e13',
+		flames: [0],
+		extra: (p, s) => {
+			for (const k of [-1, 1]) {
+				el(
+					'path',
+					{
+						d: `M${k * 12} 2 L${k * 30} 26`,
+						stroke: s.trim,
+						'stroke-width': 2,
+						'stroke-linecap': 'round',
+					},
+					p,
+				);
+			}
+		},
+	},
+	{
+		name: 'Phantom',
+		laser: '#18ffff',
+		hull: 'M0 -44 L14 4 L8 26 L-8 26 L-14 4 Z',
+		wing: '12,-4 40,18 40,26 26,22 12,30',
+		hullColors: ['#b39ddb', '#4527a0'],
+		wingColors: ['#4527a0', '#12005e'],
+		glassColors: ['#84ffff', '#00b8d4'],
+		flameColors: ['#ffffff', '#18ffff', '#2962ff'],
+		trim: '#18ffff',
+		outline: '#0a0026',
+		flames: [-5, 5],
+		extra: (p, s) => {
+			el(
+				'path',
+				{
+					d: 'M-14 4 L0 -44 L14 4',
+					fill: 'none',
+					stroke: s.trim,
+					'stroke-width': 1.2,
+					opacity: 0.8,
+				},
+				p,
+			);
+		},
+	},
+	{
+		name: 'Nova',
+		laser: '#ffffff',
+		hull: 'M0 -46 C14 -30 16 0 12 24 L-12 24 C-16 0 -14 -30 0 -46 Z',
+		wing: '12,-8 30,2 42,30 34,38 12,26',
+		hullColors: ['#fffde7', '#ffca28'],
+		wingColors: ['#ffa000', '#e65100'],
+		glassColors: ['#e1f5fe', '#29b6f6'],
+		flameColors: ['#ffffff', '#ffe57f', '#ff6d00'],
+		trim: '#ffffff',
+		outline: '#4e2600',
+		flames: [-10, 0, 10],
+		extra: (p, s) => {
+			const ring = el(
+				'ellipse',
+				{
+					cx: 0,
+					cy: 4,
+					rx: 30,
+					ry: 7,
+					fill: 'none',
+					stroke: s.trim,
+					'stroke-width': 2,
+					opacity: 0.7,
+				},
+				p,
+			);
+			anim(ring, 'animate', {
+				attributeName: 'opacity',
+				values: '0.8;0.25;0.8',
+				dur: '1.2s',
+				repeatCount: 'indefinite',
+			});
+		},
+	},
+];
+
+export function buildShip(parent: Element, skinIndex: number): void {
+	const s = SHIP_SKINS[skinIndex] ?? SHIP_SKINS[0];
+	if (!s) return;
+	const flameFill = localGrad(parent, s.flameColors);
+	for (const x of s.flames) {
+		const w = s.flames.length > 1 ? 5 : 8;
+		const flame = el(
+			'polygon',
+			{ points: `${x - w},20 ${x},46 ${x + w},20`, fill: flameFill },
+			parent,
+		);
+		anim(flame, 'animate', {
+			attributeName: 'opacity',
+			values: '1;0.5;1',
+			dur: '0.16s',
+			repeatCount: 'indefinite',
+		});
+		const flame2 = el(
+			'polygon',
+			{
+				points: `${x - w / 2},20 ${x},34 ${x + w / 2},20`,
+				fill: '#fff8c4',
+			},
+			parent,
+		);
+		anim(flame2, 'animate', {
+			attributeName: 'opacity',
+			values: '0.9;0.4;0.9',
+			dur: '0.12s',
+			repeatCount: 'indefinite',
+		});
+	}
 	// כנפיים
-	el(
-		'polygon',
-		{
-			points: '-11,-2 -36,26 -36,36 -10,24',
-			fill: 'url(#bl-wing)',
-			stroke: '#0d1b3a',
-			'stroke-width': 1.5,
-			'stroke-linejoin': 'round',
-		},
-		parent,
-	);
-	el(
-		'polygon',
-		{
-			points: '11,-2 36,26 36,36 10,24',
-			fill: 'url(#bl-wing)',
-			stroke: '#0d1b3a',
-			'stroke-width': 1.5,
-			'stroke-linejoin': 'round',
-		},
-		parent,
-	);
-	el(
-		'rect',
-		{ x: -38, y: 30, width: 5, height: 9, rx: 2, fill: '#ff5252' },
-		parent,
-	);
-	el(
-		'rect',
-		{ x: 33, y: 30, width: 5, height: 9, rx: 2, fill: '#ff5252' },
-		parent,
-	);
+	const wingFill = localGrad(parent, s.wingColors);
+	for (const k of [1, -1]) {
+		el(
+			'polygon',
+			{
+				points: s.wing,
+				fill: wingFill,
+				stroke: s.outline,
+				'stroke-width': 1.5,
+				'stroke-linejoin': 'round',
+				transform: `scale(${k} 1)`,
+			},
+			parent,
+		);
+	}
 	// גוף
 	el(
 		'path',
 		{
-			d: 'M0 -42 C11 -28 15 -8 13 24 L-13 24 C-15 -8 -11 -28 0 -42 Z',
-			fill: 'url(#bl-hull)',
-			stroke: '#0d1b3a',
+			d: s.hull,
+			fill: localGrad(parent, s.hullColors, true),
+			stroke: s.outline,
 			'stroke-width': 1.8,
 			'stroke-linejoin': 'round',
 		},
 		parent,
 	);
-	el(
-		'path',
-		{ d: 'M-13 14 H13', stroke: '#ff5252', 'stroke-width': 3 },
-		parent,
-	);
+	el('path', { d: 'M-9 14 H9', stroke: s.trim, 'stroke-width': 3 }, parent);
 	el(
 		'ellipse',
 		{
 			cx: 0,
 			cy: -12,
-			rx: 6,
-			ry: 11,
-			fill: 'url(#bl-glass)',
-			stroke: '#0d1b3a',
+			rx: 5.5,
+			ry: 10,
+			fill: localGrad(parent, s.glassColors),
+			stroke: s.outline,
 			'stroke-width': 1.2,
 		},
 		parent,
 	);
 	el(
 		'ellipse',
-		{ cx: -2, cy: -16, rx: 1.8, ry: 4, fill: '#fff', opacity: 0.7 },
+		{ cx: -2, cy: -16, rx: 1.6, ry: 3.6, fill: '#fff', opacity: 0.7 },
 		parent,
 	);
-	el(
-		'rect',
-		{ x: -5, y: 24, width: 10, height: 4, rx: 1.5, fill: '#37474f' },
-		parent,
-	);
+	s.extra?.(parent, s);
 }
 
 function drawTrophy(
@@ -479,6 +650,9 @@ export class BlastModal extends Modal {
 	private astLayer!: SVGGElement;
 	private fxLayer!: SVGGElement;
 	private shipRot!: SVGGElement;
+	private shipG!: SVGGElement;
+	private skin = 0;
+	private music: GameMusic;
 	private hudLayer!: SVGGElement;
 	private overlayLayer!: SVGGElement;
 
@@ -515,6 +689,7 @@ export class BlastModal extends Modal {
 	constructor(app: App, plugin: SpacedRepetitionPlugin) {
 		super(app);
 		this.plugin = plugin;
+		this.music = new GameMusic(plugin, 'blast');
 	}
 
 	onOpen(): void {
@@ -537,6 +712,7 @@ export class BlastModal extends Modal {
 
 	onClose(): void {
 		this.closed = true;
+		this.music.stop();
 		window.cancelAnimationFrame(this.raf);
 		this.clearTimers();
 		this.component.unload();
@@ -595,13 +771,12 @@ export class BlastModal extends Modal {
 
 		// --- הגדרות: גרדיאנטים ---
 		const defs = el('defs', {}, svg);
-		const lin = (
-			id: string,
-			stops: [number, string][],
-			x2 = 0,
-			y2 = 1,
-		): void => {
-			const g = el('linearGradient', { id, x1: 0, y1: 0, x2, y2 }, defs);
+		const lin = (id: string, stops: [number, string][]): void => {
+			const g = el(
+				'linearGradient',
+				{ id, x1: 0, y1: 0, x2: 0, y2: 1 },
+				defs,
+			);
 			stops.forEach(([o, c]) =>
 				el('stop', { offset: o, 'stop-color': c }, g),
 			);
@@ -656,28 +831,6 @@ export class BlastModal extends Modal {
 		rad('bl-rockC', [
 			[0, '#d19a78'],
 			[1, '#5a362a'],
-		]);
-		lin(
-			'bl-hull',
-			[
-				[0, '#eceff1'],
-				[1, '#90a4ae'],
-			],
-			1,
-			0,
-		);
-		lin('bl-wing', [
-			[0, '#5c6bc0'],
-			[1, '#1a237e'],
-		]);
-		lin('bl-glass', [
-			[0, '#b3e5fc'],
-			[1, '#0288d1'],
-		]);
-		lin('bl-flame', [
-			[0, '#fff176'],
-			[0.5, '#ff9100'],
-			[1, '#d50000'],
 		]);
 		lin('bl-gold', [
 			[0, '#fff59d'],
@@ -749,12 +902,12 @@ export class BlastModal extends Modal {
 
 		// חללית
 		this.shipRot = el('g', {}, svg);
-		const ship = el(
+		this.shipG = el(
 			'g',
 			{ transform: `translate(${SHIP_X} ${SHIP_Y})` },
 			this.shipRot,
 		);
-		buildShip(ship);
+		buildShip(this.shipG, this.skin);
 
 		this.hudLayer = el('g', { 'pointer-events': 'none' }, svg);
 		this.overlayLayer = el('g', {}, svg);
@@ -808,6 +961,27 @@ export class BlastModal extends Modal {
 		stats.setText(
 			`🏆 High score: ${bd.highScore}   ·   🔥 Best streak: ${bd.bestStreak}   ·   🎮 Games: ${bd.games}`,
 		);
+
+		// בחירת חללית: כל עיצוב נפתח לפי ההתקדמות ב-review הרגיל
+		renderRewardPicker(m, this.plugin, {
+			title: 'Ship',
+			names: SHIP_SKINS.map((s) => s.name),
+			get: () => this.plugin.settings.blastShip,
+			set: (i) => {
+				this.plugin.settings.blastShip = i;
+			},
+			draw: (cell, i) => {
+				const svg = el('svg', {
+					viewBox: '-46 -50 92 102',
+					width: 50,
+					height: 56,
+				});
+				cell.appendChild(svg);
+				buildShip(svg, i);
+			},
+		});
+		renderMusicPanel(m, this.plugin, 'blast', this.music);
+		renderLeaderboardButton(m, this.plugin, 'blast');
 
 		const label = m.createEl('label');
 		label.setCssStyles({ display: 'block', marginBottom: '0.75em' });
@@ -883,6 +1057,15 @@ export class BlastModal extends Modal {
 			new Notice('Blast needs at least 2 cards with different answers.');
 			return;
 		}
+
+		this.skin = effectivePick(
+			this.plugin.settings.blastShip,
+			rewardTier(this.plugin),
+			SHIP_SKINS.length,
+		);
+		clearChildren(this.shipG);
+		buildShip(this.shipG, this.skin);
+		this.music.start();
 
 		this.pool = pool;
 		this.queue = shuffle(scope.slice());
@@ -1325,6 +1508,12 @@ export class BlastModal extends Modal {
 		this.clearAsteroids();
 		this.newRecord = this.score > this.startBest && this.score > 0;
 		this.commitRecord(true);
+		void submitScore(this.plugin, 'blast', {
+			done: false,
+			level: this.level,
+			value: this.score,
+			gear: SHIP_SKINS[this.skin]?.name ?? '',
+		});
 		this.renderHud();
 		this.renderEnd(completed);
 		if (completed) this.sfxCorrect();
@@ -1605,7 +1794,7 @@ export class BlastModal extends Modal {
 				y1: ny,
 				x2: tx,
 				y2: ty,
-				stroke: '#ff5252',
+				stroke: SHIP_SKINS[this.skin]?.laser ?? '#ff5252',
 				'stroke-width': 9,
 				'stroke-linecap': 'round',
 				opacity: 0.35,

@@ -9,6 +9,8 @@ import {
 import type SpacedRepetitionPlugin from './main';
 import type { Flashcard } from './main';
 import { el, shuffle, stripMd } from './blast';
+import { GameMusic, renderMusicPanel } from './music';
+import { effectivePick, renderRewardPicker, rewardTier } from './rewards';
 
 // ============================================================================
 // Hangman - איש תלוי
@@ -30,23 +32,70 @@ const MAX_LETTERS = 24;
 // המפתח של "כל החפיסות" בטבלת השיאים
 const ALL_DECKS_KEY = '*';
 
-const HE_LETTERS = Array.from('אבגדהוזחטיכלמנסעפצקרשת');
-const EN_LETTERS = Array.from('abcdefghijklmnopqrstuvwxyz');
-const HE_FINALS: Record<string, string> = {
+// אלפבית מלא לכתבים נפוצים. לכל כתב אחר (ולאותיות נוספות כמו ß או і) המקלדת
+// נבנית מהאותיות שמופיעות בחפיסה עצמה
+const ALPHABETS: Record<string, string[]> = {
+	Latin: Array.from('abcdefghijklmnopqrstuvwxyz'),
+	Hebrew: Array.from('אבגדהוזחטיכלמנסעפצקרשת'),
+	Cyrillic: Array.from('абвгдежзийклмнопрстуфхцчшщъыьэюя'),
+	Greek: Array.from('αβγδεζηθικλμνξοπρστυφχψω'),
+	Arabic: Array.from('ابتثجحخدذرزسشصضطظعغفقكلمنهوي'),
+};
+const SCRIPTS = [
+	'Latin',
+	'Hebrew',
+	'Cyrillic',
+	'Greek',
+	'Arabic',
+	'Armenian',
+	'Georgian',
+	'Devanagari',
+	'Bengali',
+	'Thai',
+	'Hangul',
+	'Hiragana',
+	'Katakana',
+	'Han',
+];
+const SCRIPT_RES: [string, RegExp][] = SCRIPTS.map((s) => [
+	s,
+	new RegExp(`\\p{Script=${s}}`, 'u'),
+]);
+const OTHER_SCRIPT = 'Other';
+const scriptOf = (ch: string): string => {
+	for (const [name, re] of SCRIPT_RES) {
+		if (re.test(ch)) return name;
+	}
+	return OTHER_SCRIPT;
+};
+// כתבים שבהם סימן מעל האות הוא תוספת לאות הבסיס (é מנחשים כ-e). בכתבים
+// אחרים אות מורכבת היא אות בפני עצמה (й היא לא и)
+const SPLIT_MARKS = new Set(['Latin', 'Hebrew', 'Greek', 'Arabic']);
+// כתבים שבהם המקשים מוצגים באות גדולה
+const UPPERCASE = new Set(['Latin', 'Cyrillic', 'Greek', 'Armenian']);
+// צורות סופיות שנחשבות כאות הרגילה
+const FINALS: Record<string, string> = {
 	ך: 'כ',
 	ם: 'מ',
 	ן: 'נ',
 	ף: 'פ',
 	ץ: 'צ',
+	ς: 'σ',
 };
+const LETTER_RE = /\p{L}/u;
 // ניקוד, טעמים וסימנים דיאקריטיים: מוצמדים לאות שלפניהם
-const MARK_RE = /[̀-֑ͯ-ׇֽֿׁׂׅׄ]/;
+const MARK_RE = /\p{M}/u;
+const RTL_RE =
+	/[\p{Script=Hebrew}\p{Script=Arabic}\p{Script=Syriac}\p{Script=Thaana}]/u;
+// מעל המספר הזה (למשל בסינית) המקלדת מציגה רק חלק מהאותיות
+const MAX_KEYS = 48;
+const KEYS_WHEN_LARGE = 36;
 
 // האות שצריך לנחש בשביל התו הזה, או null אם זה לא תו שמנחשים
 const letterKey = (ch: string): string | null => {
-	if (/[א-ת]/.test(ch)) return HE_FINALS[ch] ?? ch;
+	if (!LETTER_RE.test(ch)) return null;
 	const l = ch.toLowerCase();
-	return /^[a-z]$/.test(l) ? l : null;
+	return FINALS[l] ?? l;
 };
 
 const questionText = (card: Flashcard): string =>
@@ -64,8 +113,8 @@ interface Puzzle {
 	keys: Set<string>;
 	clue: string;
 	path: string;
-	hasHe: boolean;
-	hasEn: boolean;
+	scripts: string[]; // הכתבים של האותיות המוסתרות, לבניית המקלדת
+	rtl: boolean;
 }
 
 // מפרק טקסט למילים ואותיות. מחזיר null אם הטקסט לא מתאים לניחוש
@@ -83,21 +132,25 @@ function parseTarget(raw: string): { words: Slot[][]; letters: number } | null {
 	let cur: Slot[] = [];
 	let letters = 0;
 	let total = 0;
-	for (const ch of Array.from(line.normalize('NFD'))) {
-		if (ch === ' ') {
+	for (const raw of Array.from(line.normalize('NFC'))) {
+		if (raw === ' ') {
 			if (cur.length > 0) words.push(cur);
 			cur = [];
 			continue;
 		}
-		if (MARK_RE.test(ch)) {
+		if (MARK_RE.test(raw)) {
 			const last = cur[cur.length - 1];
-			if (last) last.display += ch;
+			if (last) last.display += raw;
 			continue;
 		}
-		const key = letterKey(ch);
+		// אות עם סימן: מנחשים את אות הבסיס, והסימן מוצג יחד איתה
+		const parts = Array.from(raw.normalize('NFD'));
+		const base = parts[0] ?? raw;
+		const split = parts.length > 1 && SPLIT_MARKS.has(scriptOf(base));
+		const key = letterKey(split ? base : raw);
 		if (key !== null) letters++;
 		total++;
-		cur.push({ display: ch, key, revealed: key === null, el: null });
+		cur.push({ display: raw, key, revealed: key === null, el: null });
 	}
 	if (cur.length > 0) words.push(cur);
 	if (letters < MIN_LETTERS || letters > MAX_LETTERS) return null;
@@ -130,13 +183,148 @@ function buildPuzzle(card: Flashcard): Puzzle | null {
 			if (s.key !== null) keys.add(s.key);
 		}
 	}
-	let hasHe = false;
-	let hasEn = false;
+	const scripts: string[] = [];
+	let rtl = false;
 	for (const k of keys) {
-		if (/[a-z]/.test(k)) hasEn = true;
-		else hasHe = true;
+		const s = scriptOf(k);
+		if (!scripts.includes(s)) scripts.push(s);
+		if (RTL_RE.test(k)) rtl = true;
 	}
-	return { words, keys, clue, path: card.filePath, hasHe, hasEn };
+	return { words, keys, clue, path: card.filePath, scripts, rtl };
+}
+
+// עיצובי הדמות. עיצוב i נפתח בדרגה i (ראו rewards.ts).
+// bg ריק = בלי לוח רקע, בצבעי ערכת הנושא של Obsidian
+interface HangmanTheme {
+	name: string;
+	bg: string;
+	gallows: string;
+	body: string;
+	dash: string;
+	glow: string;
+	hat: 'none' | 'cowboy' | 'crown';
+}
+
+const HANGMAN_THEMES: HangmanTheme[] = [
+	{
+		name: 'Classic',
+		bg: '',
+		gallows: 'currentColor',
+		body: 'currentColor',
+		dash: '',
+		glow: '',
+		hat: 'none',
+	},
+	{
+		name: 'Chalk',
+		bg: '#2f4f3f',
+		gallows: '#cfd8dc',
+		body: '#ffffff',
+		dash: '9 5',
+		glow: '',
+		hat: 'none',
+	},
+	{
+		name: 'Neon',
+		bg: '#0b0b1e',
+		gallows: '#ff4081',
+		body: '#18ffff',
+		dash: '',
+		glow: 'drop-shadow(0 0 3px #18ffff)',
+		hat: 'none',
+	},
+	{
+		name: 'Western',
+		bg: 'linear-gradient(#ffb74d, #e64a19)',
+		gallows: '#3e2723',
+		body: '#212121',
+		dash: '',
+		glow: '',
+		hat: 'cowboy',
+	},
+	{
+		name: 'Royal',
+		bg: 'linear-gradient(#283593, #0d0d2b)',
+		gallows: '#ffd54f',
+		body: '#fff8e1',
+		dash: '',
+		glow: 'drop-shadow(0 0 2px #ffd54f)',
+		hat: 'crown',
+	},
+];
+
+// מצייר את הגרדום ומחזיר את חלקי הגוף לפי סדר הטעויות
+function drawFigure(
+	parent: HTMLElement,
+	theme: HangmanTheme,
+	scale: number,
+): SVGElement[] {
+	const panel = parent.createDiv();
+	panel.setCssStyles({
+		display: 'flex',
+		background: theme.bg,
+		borderRadius: '10px',
+		padding: theme.bg !== '' ? `${Math.round(6 * scale)}px` : '0',
+		color: 'var(--text-normal)',
+	});
+	const svg = el('svg', {
+		viewBox: '0 0 120 130',
+		width: Math.round(130 * scale),
+		height: Math.round(140 * scale),
+	});
+	svg.setCssStyles({ filter: theme.glow });
+	panel.appendChild(svg);
+	const line = {
+		'stroke-width': 4,
+		'stroke-linecap': 'round',
+		'stroke-linejoin': 'round',
+		fill: 'none',
+	};
+	const gallows = { ...line, stroke: theme.gallows };
+	const body: Record<string, string | number> = {
+		...line,
+		stroke: theme.body,
+	};
+	if (theme.dash !== '') body['stroke-dasharray'] = theme.dash;
+	// הגרדום
+	el('path', { d: 'M8 124 H72 M24 124 V8 H80 V22', ...gallows }, svg);
+	el('path', { d: 'M24 30 L44 8', ...gallows, 'stroke-width': 3 }, svg);
+
+	// הראש, יחד עם הכובע של העיצוב
+	const head = el('g', {}, svg);
+	el('circle', { cx: 80, cy: 34, r: 12, ...body }, head);
+	if (theme.hat === 'cowboy') {
+		el(
+			'path',
+			{
+				d: 'M62 25 H98 M71 25 C71 12 89 12 89 25',
+				...line,
+				stroke: '#4e342e',
+				fill: '#6d4c41',
+			},
+			head,
+		);
+	} else if (theme.hat === 'crown') {
+		el(
+			'path',
+			{
+				d: 'M69 24 L67 11 L74 18 L80 9 L86 18 L93 11 L91 24 Z',
+				...line,
+				'stroke-width': 2,
+				stroke: '#ffb300',
+				fill: '#ffd54f',
+			},
+			head,
+		);
+	}
+	return [
+		head,
+		el('path', { d: 'M80 46 V84', ...body }, svg),
+		el('path', { d: 'M80 56 L62 70', ...body }, svg),
+		el('path', { d: 'M80 56 L98 70', ...body }, svg),
+		el('path', { d: 'M80 84 L64 108', ...body }, svg),
+		el('path', { d: 'M80 84 L96 108', ...body }, svg),
+	];
 }
 
 type Phase = 'menu' | 'playing' | 'pause' | 'over';
@@ -163,6 +351,8 @@ export class HangmanModal extends Modal {
 	private deckKey = ALL_DECKS_KEY;
 	private deckLabel = '';
 	private deckCards: Flashcard[] = [];
+	// האותיות שמופיעות בתשובות של החפיסה, לפי כתב
+	private deckKeys = new Map<string, Set<string>>();
 	private queue: Flashcard[] = [];
 	private puzzle: Puzzle | null = null;
 	private guessed = new Set<string>();
@@ -170,10 +360,12 @@ export class HangmanModal extends Modal {
 	private hintsLeft = 0;
 	private hintBtn: HTMLButtonElement | null = null;
 	private streak = 0;
+	private music: GameMusic;
 
 	constructor(app: App, plugin: SpacedRepetitionPlugin) {
 		super(app);
 		this.plugin = plugin;
+		this.music = new GameMusic(plugin, 'hangman');
 	}
 
 	onOpen(): void {
@@ -190,6 +382,7 @@ export class HangmanModal extends Modal {
 
 	onClose(): void {
 		this.closed = true;
+		this.music.stop();
 		this.win?.removeEventListener('keydown', this.onKey);
 		// רצף שנקטע באמצע עדיין נחשב לשיא
 		if (this.phase === 'playing' || this.phase === 'pause') {
@@ -246,6 +439,21 @@ export class HangmanModal extends Modal {
 		const stats = m.createDiv();
 		stats.setCssStyles({ fontWeight: 'bold', marginBottom: '0.75em' });
 		stats.setText(`🎮 Games: ${bd.hangmanGames}`);
+
+		// בחירת עיצוב לדמות: כל עיצוב נפתח לפי ההתקדמות ב-review הרגיל
+		renderRewardPicker(m, this.plugin, {
+			title: 'Figure design',
+			names: HANGMAN_THEMES.map((t) => t.name),
+			get: () => this.plugin.settings.hangmanTheme,
+			set: (i) => {
+				this.plugin.settings.hangmanTheme = i;
+			},
+			draw: (cell, i) => {
+				const t = HANGMAN_THEMES[i];
+				if (t) drawFigure(cell, t, 0.36);
+			},
+		});
+		renderMusicPanel(m, this.plugin, 'hangman', this.music);
 
 		const box = m.createDiv();
 		box.setCssStyles({
@@ -311,6 +519,20 @@ export class HangmanModal extends Modal {
 		this.session++;
 		this.streak = 0;
 		this.queue = [];
+		this.music.start();
+
+		this.deckKeys.clear();
+		for (const c of this.deckCards) {
+			for (const k of buildPuzzle(c)?.keys ?? []) {
+				const s = scriptOf(k);
+				let set = this.deckKeys.get(s);
+				if (!set) {
+					set = new Set<string>();
+					this.deckKeys.set(s, set);
+				}
+				set.add(k);
+			}
+		}
 
 		this.menuEl.setCssStyles({ display: 'none' });
 		const g = this.gameEl;
@@ -383,32 +605,14 @@ export class HangmanModal extends Modal {
 			display: 'flex',
 			justifyContent: 'center',
 			marginTop: '8px',
-			color: 'var(--text-normal)',
 		});
-		const svg = el('svg', {
-			viewBox: '0 0 120 130',
-			width: 130,
-			height: 140,
-		});
-		wrap.appendChild(svg);
-		const line = {
-			stroke: 'currentColor',
-			'stroke-width': 4,
-			'stroke-linecap': 'round',
-			fill: 'none',
-		};
-		// הגרדום
-		el('path', { d: 'M8 124 H72 M24 124 V8 H80 V22', ...line }, svg);
-		el('path', { d: 'M24 30 L44 8', ...line, 'stroke-width': 3 }, svg);
-		// חלקי הגוף, לפי סדר הטעויות
-		this.parts = [
-			el('circle', { cx: 80, cy: 34, r: 12, ...line }, svg),
-			el('path', { d: 'M80 46 V84', ...line }, svg),
-			el('path', { d: 'M80 56 L62 70', ...line }, svg),
-			el('path', { d: 'M80 56 L98 70', ...line }, svg),
-			el('path', { d: 'M80 84 L64 108', ...line }, svg),
-			el('path', { d: 'M80 84 L96 108', ...line }, svg),
-		];
+		const pick = effectivePick(
+			this.plugin.settings.hangmanTheme,
+			rewardTier(this.plugin),
+			HANGMAN_THEMES.length,
+		);
+		const theme = HANGMAN_THEMES[pick] ?? HANGMAN_THEMES[0];
+		this.parts = theme ? drawFigure(wrap, theme, 1) : [];
 	}
 
 	private renderStatus(): void {
@@ -453,7 +657,7 @@ export class HangmanModal extends Modal {
 		);
 
 		this.wordEl.empty();
-		this.wordEl.setAttr('dir', puzzle.hasHe ? 'rtl' : 'ltr');
+		this.wordEl.setAttr('dir', puzzle.rtl ? 'rtl' : 'ltr');
 		for (const word of puzzle.words) {
 			const w = this.wordEl.createDiv();
 			w.setCssStyles({ display: 'flex', gap: '4px' });
@@ -487,9 +691,13 @@ export class HangmanModal extends Modal {
 		this.bottomEl.empty();
 		this.keyBtns.clear();
 		const size = Platform.isPhone ? '2.2em' : '2.5em';
-		const addRow = (letters: string[], dir: 'rtl' | 'ltr'): void => {
+		const addRow = (script: string): void => {
+			const letters = this.keyboardLetters(script, puzzle);
+			const first = letters[0];
+			if (first === undefined) return;
+			const upper = UPPERCASE.has(script);
 			const row = this.bottomEl.createDiv();
-			row.setAttr('dir', dir);
+			row.setAttr('dir', RTL_RE.test(first) ? 'rtl' : 'ltr');
 			row.setCssStyles({
 				display: 'flex',
 				flexWrap: 'wrap',
@@ -498,7 +706,10 @@ export class HangmanModal extends Modal {
 				marginBottom: '10px',
 			});
 			for (const l of letters) {
-				const btn = row.createEl('button', { text: l.toUpperCase() });
+				const big = l.toUpperCase();
+				const btn = row.createEl('button', {
+					text: upper && big.length === l.length ? big : l,
+				});
 				btn.setCssStyles({
 					width: size,
 					height: size,
@@ -510,8 +721,7 @@ export class HangmanModal extends Modal {
 				this.keyBtns.set(l, btn);
 			}
 		};
-		if (puzzle.hasHe) addRow(HE_LETTERS, 'rtl');
-		if (puzzle.hasEn) addRow(EN_LETTERS, 'ltr');
+		for (const script of puzzle.scripts) addRow(script);
 
 		const actions = this.bottomEl.createDiv();
 		actions.setCssStyles({
@@ -526,6 +736,26 @@ export class HangmanModal extends Modal {
 		this.renderHintBtn();
 		actions.createEl('button', { text: '⏭ Skip' }).onclick = () =>
 			this.skip();
+	}
+
+	// המקשים של כתב אחד: האלפבית המלא אם הוא מוכר, ועוד כל אות מהחפיסה.
+	// בכתב עם הרבה מאוד אותיות מוצגות אותיות התשובה ועוד אותיות אקראיות
+	private keyboardLetters(script: string, puzzle: Puzzle): string[] {
+		const base = ALPHABETS[script] ?? [];
+		const extra = Array.from(this.deckKeys.get(script) ?? [])
+			.filter((k) => !base.includes(k))
+			.sort();
+		const all = [...base, ...extra];
+		for (const k of puzzle.keys) {
+			if (scriptOf(k) === script && !all.includes(k)) all.push(k);
+		}
+		if (all.length <= MAX_KEYS) return all;
+		const own = all.filter((k) => puzzle.keys.has(k));
+		const decoys = shuffle(all.filter((k) => !puzzle.keys.has(k))).slice(
+			0,
+			Math.max(0, KEYS_WHEN_LARGE - own.length),
+		);
+		return [...own, ...decoys].sort();
 	}
 
 	private renderHintBtn(): void {
