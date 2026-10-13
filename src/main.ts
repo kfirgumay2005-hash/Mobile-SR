@@ -17,6 +17,10 @@ import {
 import { BlastModal } from './blast';
 import { MatchModal } from './match';
 import { HangmanModal } from './hangman';
+import { AliensModal } from './aliens';
+import { SwordModal } from './sword';
+import type { GameId } from './music';
+import { checkUnlockKey } from './rewards';
 
 export const cleanStr = (s: string | undefined): string => {
 	if (s === undefined) return '';
@@ -994,6 +998,16 @@ export class DashboardModal extends Modal {
 		addGame('🪢 Hangman', 'Guess the hidden answer letter by letter', () =>
 			new HangmanModal(this.app, this.plugin).open(),
 		);
+		addGame(
+			'👾 Aliens',
+			'Fight off the invasion with weapons your reviews unlock',
+			() => new AliensModal(this.app, this.plugin).open(),
+		);
+		addGame(
+			'⚔️ Sword',
+			'Fight off monsters with a sword your reviews upgrade',
+			() => new SwordModal(this.app, this.plugin).open(),
+		);
 	}
 
 	private renderTable(
@@ -1137,6 +1151,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	isSaving: boolean = false; // דגל למניעת לולאת רענון בעת שמירה
 	blastData: BlastData = defaultBlastData();
 	isSavingBlast: boolean = false;
+	unlockAll: boolean = false; // המפתח הסודי ב-data.json תקין
 
 	async onload(): Promise<void> {
 		// מוודא שהכספת טעונה במלואה לפני ניסיון הקריאה מהקובץ
@@ -1201,6 +1216,22 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'open-aliens-game',
+			name: 'Play aliens game',
+			callback: () => {
+				new AliensModal(this.app, this).open();
+			},
+		});
+
+		this.addCommand({
+			id: 'open-sword-game',
+			name: 'Play sword game',
+			callback: () => {
+				new SwordModal(this.app, this).open();
+			},
+		});
+
+		this.addCommand({
 			id: 'fix-cards-and-remove-duplicates',
 			name: 'Fix Cards Spacing and Remove Duplicates',
 			callback: async () => {
@@ -1228,7 +1259,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		return files.find((f) => f.name === 'srs-data.md') || null;
 	}
 
-	private async ensureFolderExists(folderPath: string): Promise<void> {
+	async ensureFolderExists(folderPath: string): Promise<void> {
 		if (!folderPath) return;
 		const normalized = folderPath.trim().replace(/^\/+|\/+$/g, '');
 		if (!normalized) return;
@@ -1259,6 +1290,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		} else {
 			this.settings = Object.assign({}, DEFAULT_SETTINGS);
 		}
+		this.unlockAll = await checkUnlockKey(this.settings.unlockKey);
 
 		let newStore: Record<string, CardSchedulingMetadata> = {};
 		const file = this.getVaultDataFile();
@@ -1408,6 +1440,14 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		return folder ? `${folder}/blast-data.md` : 'blast-data.md';
 	}
 
+	// תיקיית קבצי המוזיקה של משחק: game-music/<משחק> ליד blast-data.md
+	public getGameMusicFolder(game: GameId): string {
+		const filePath = this.getBlastDataFilePath();
+		const slash = filePath.lastIndexOf('/');
+		const base = slash > 0 ? `${filePath.substring(0, slash)}/` : '';
+		return `${base}game-music/${game}`;
+	}
+
 	private getVaultBlastFile(): TFile | null {
 		const file = this.app.vault.getAbstractFileByPath(
 			this.getBlastDataFilePath(),
@@ -1451,6 +1491,20 @@ export default class SpacedRepetitionPlugin extends Plugin {
 						hangmanGames:
 							typeof p.hangmanGames === 'number'
 								? p.hangmanGames
+								: 0,
+						aliensHigh:
+							typeof p.aliensHigh === 'number' ? p.aliensHigh : 0,
+						aliensBestTime:
+							typeof p.aliensBestTime === 'number'
+								? p.aliensBestTime
+								: 0,
+						swordBest:
+							typeof p.swordBest === 'number' ? p.swordBest : 0,
+						swordGames:
+							typeof p.swordGames === 'number' ? p.swordGames : 0,
+						aliensGames:
+							typeof p.aliensGames === 'number'
+								? p.aliensGames
 								: 0,
 					};
 					const readMap = (

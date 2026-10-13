@@ -9,6 +9,8 @@ import {
 import type SpacedRepetitionPlugin from './main';
 import type { Flashcard } from './main';
 import { normKey, shuffle } from './blast';
+import { GameMusic, renderMusicPanel } from './music';
+import { effectivePick, renderRewardPicker, rewardTier } from './rewards';
 
 // ============================================================================
 // Match - משחק בסגנון Quizlet Match
@@ -35,6 +37,48 @@ const fmtTime = (secs: number): string => {
 
 const questionText = (card: Flashcard): string =>
 	card.hint !== '' ? card.firstLine : card.front;
+
+// עיצובי האריחים. עיצוב i נפתח בדרגה i (ראו rewards.ts).
+// color ריק = צבעי ערכת הנושא של Obsidian
+interface MatchTheme {
+	name: string;
+	bg: string;
+	border: string;
+	color: string;
+}
+
+const MATCH_THEMES: MatchTheme[] = [
+	{
+		name: 'Classic',
+		bg: 'var(--background-secondary)',
+		border: 'var(--background-modifier-border)',
+		color: '',
+	},
+	{
+		name: 'Ocean',
+		bg: 'linear-gradient(135deg, #0d47a1, #00838f)',
+		border: '#4fc3f7',
+		color: '#ffffff',
+	},
+	{
+		name: 'Sunset',
+		bg: 'linear-gradient(135deg, #ad1457, #ef6c00)',
+		border: '#ffcc80',
+		color: '#ffffff',
+	},
+	{
+		name: 'Forest',
+		bg: 'linear-gradient(135deg, #1b5e20, #558b2f)',
+		border: '#c5e1a5',
+		color: '#ffffff',
+	},
+	{
+		name: 'Galaxy',
+		bg: 'linear-gradient(135deg, #1a0b3d, #6a1b9a 60%, #283593)',
+		border: '#ce93d8',
+		color: '#ffffff',
+	},
+];
 
 type TileState = 'idle' | 'selected' | 'wrong' | 'matched';
 
@@ -66,10 +110,13 @@ export class MatchModal extends Modal {
 	private selected: Tile | null = null;
 	private left = 0;
 	private mistakes = 0;
+	private theme = 0;
+	private music: GameMusic;
 
 	constructor(app: App, plugin: SpacedRepetitionPlugin) {
 		super(app);
 		this.plugin = plugin;
+		this.music = new GameMusic(plugin, 'match');
 	}
 
 	onOpen(): void {
@@ -85,6 +132,7 @@ export class MatchModal extends Modal {
 
 	onClose(): void {
 		this.closed = true;
+		this.music.stop();
 		this.stopTimer();
 		this.component.unload();
 		this.contentEl.empty();
@@ -126,6 +174,32 @@ export class MatchModal extends Modal {
 		const stats = m.createDiv();
 		stats.setCssStyles({ fontWeight: 'bold', marginBottom: '0.75em' });
 		stats.setText(`🎮 Games: ${bd.matchGames}`);
+
+		// בחירת עיצוב לאריחים: כל עיצוב נפתח לפי ההתקדמות ב-review הרגיל
+		renderRewardPicker(m, this.plugin, {
+			title: 'Card design',
+			names: MATCH_THEMES.map((t) => t.name),
+			get: () => this.plugin.settings.matchTheme,
+			set: (i) => {
+				this.plugin.settings.matchTheme = i;
+			},
+			draw: (cell, i) => {
+				const t = MATCH_THEMES[i];
+				if (!t) return;
+				const tile = cell.createDiv({ text: 'Aa' });
+				tile.setCssStyles({
+					width: '54px',
+					height: '40px',
+					lineHeight: '36px',
+					borderRadius: '8px',
+					border: `2px solid ${t.border}`,
+					background: t.bg,
+					color: t.color,
+					fontWeight: 'bold',
+				});
+			},
+		});
+		renderMusicPanel(m, this.plugin, 'match', this.music);
 
 		const box = m.createDiv();
 		box.setCssStyles({
@@ -213,6 +287,13 @@ export class MatchModal extends Modal {
 		this.left = cards.length;
 		this.mistakes = 0;
 		this.penalty = 0;
+		this.theme = effectivePick(
+			this.plugin.settings.matchTheme,
+			rewardTier(this.plugin),
+			MATCH_THEMES.length,
+		);
+		const theme = MATCH_THEMES[this.theme];
+		this.music.start();
 
 		this.menuEl.setCssStyles({ display: 'none' });
 		const g = this.gameEl;
@@ -272,8 +353,9 @@ export class MatchModal extends Modal {
 				justifyContent: 'center',
 				padding: phone ? '4px' : '10px',
 				borderRadius: '10px',
-				border: '2px solid var(--background-modifier-border)',
-				background: 'var(--background-secondary)',
+				border: `2px solid ${theme?.border ?? ''}`,
+				background: theme?.bg ?? '',
+				color: theme?.color ?? '',
 				cursor: 'pointer',
 				overflow: 'hidden',
 				userSelect: 'none',
@@ -337,13 +419,18 @@ export class MatchModal extends Modal {
 					? 'var(--color-red)'
 					: s === 'matched'
 						? 'var(--color-green)'
-						: 'var(--background-modifier-border)';
+						: '';
+		const theme = MATCH_THEMES[this.theme];
+		// באריח מעוצב הרקע נשאר, והמצב מסומן במסגרת זוהרת
+		const themed = this.theme > 0;
 		tile.el.setCssStyles({
-			borderColor: color,
+			borderColor: color || (theme?.border ?? ''),
 			background:
-				s === 'idle'
-					? 'var(--background-secondary)'
+				s === 'idle' || themed
+					? (theme?.bg ?? '')
 					: 'var(--background-modifier-hover)',
+			boxShadow: themed && color ? `0 0 0 3px ${color}` : 'none',
+			filter: themed && s === 'selected' ? 'brightness(1.25)' : 'none',
 			opacity: s === 'matched' ? '0' : '1',
 			transform: s === 'matched' ? 'scale(0.85)' : 'none',
 			pointerEvents: s === 'matched' ? 'none' : 'auto',

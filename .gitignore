@@ -23,3 +23,6 @@ data.json
 
 # Claude Code project notes (local only)
 CLAUDE.md
+
+# Cloudflare Wrangler local state
+.wrangler
