@@ -2,7 +2,6 @@ import { App, Modal } from 'obsidian';
 import type SpacedRepetitionPlugin from './main';
 import { el } from './blast';
 import { GameMusic, Sfx, renderMusicPanel } from './music';
-import { renderLeaderboardButton, submitScore } from './online';
 import { effectivePick, renderRewardPicker, rewardTier } from './rewards';
 
 // ============================================================================
@@ -355,7 +354,6 @@ export class AliensModal extends Modal {
 			draw: (cell, i) => this.drawWeaponIcon(cell, i),
 		});
 		renderMusicPanel(m, this.plugin, 'aliens', this.music);
-		renderLeaderboardButton(m, this.plugin, 'aliens');
 
 		const play = m.createEl('button', { text: 'Play', cls: 'mod-cta' });
 		play.setCssStyles({ width: '100%' });
@@ -937,13 +935,6 @@ export class AliensModal extends Modal {
 		const time = Math.round(this.runTime * 10) / 10;
 		const prev = this.plugin.blastData.aliensBestTime;
 		const newRecord = this.commit(true, won ? time : 0);
-		// כל משחק נשלח, גם כזה שנכשל: אז נשלחים השלב והניקוד במקום הזמן
-		void submitScore(this.plugin, 'aliens', {
-			done: won,
-			level: this.level,
-			value: won ? time : this.score,
-			gear: WEAPONS[this.weapon]?.name ?? '',
-		});
 		if (won) {
 			this.sfx.tone(523, 523, 0.12, 'sine', 0.06);
 			this.sfx.tone(784, 784, 0.12, 'sine', 0.06, 0.12);

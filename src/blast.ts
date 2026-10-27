@@ -2,7 +2,6 @@ import { App, Component, MarkdownRenderer, Modal, Notice } from 'obsidian';
 import type SpacedRepetitionPlugin from './main';
 import type { Flashcard } from './main';
 import { GameMusic, renderMusicPanel } from './music';
-import { renderLeaderboardButton, submitScore } from './online';
 import { effectivePick, renderRewardPicker, rewardTier } from './rewards';
 
 // ============================================================================
@@ -981,7 +980,6 @@ export class BlastModal extends Modal {
 			},
 		});
 		renderMusicPanel(m, this.plugin, 'blast', this.music);
-		renderLeaderboardButton(m, this.plugin, 'blast');
 
 		const label = m.createEl('label');
 		label.setCssStyles({ display: 'block', marginBottom: '0.75em' });
@@ -1508,12 +1506,6 @@ export class BlastModal extends Modal {
 		this.clearAsteroids();
 		this.newRecord = this.score > this.startBest && this.score > 0;
 		this.commitRecord(true);
-		void submitScore(this.plugin, 'blast', {
-			done: false,
-			level: this.level,
-			value: this.score,
-			gear: SHIP_SKINS[this.skin]?.name ?? '',
-		});
 		this.renderHud();
 		this.renderEnd(completed);
 		if (completed) this.sfxCorrect();

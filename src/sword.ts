@@ -3,7 +3,6 @@ import type SpacedRepetitionPlugin from './main';
 import { el, shuffle } from './blast';
 import { fmtClock } from './aliens';
 import { GameMusic, Sfx, renderMusicPanel } from './music';
-import { renderLeaderboardButton, submitScore } from './online';
 import { effectivePick, renderRewardPicker, rewardTier } from './rewards';
 
 // ============================================================================
@@ -369,7 +368,6 @@ export class SwordModal extends Modal {
 			draw: (cell, i) => this.drawBladeIcon(cell, i),
 		});
 		renderMusicPanel(m, this.plugin, 'sword', this.music);
-		renderLeaderboardButton(m, this.plugin, 'sword');
 
 		const play = m.createEl('button', { text: 'Play', cls: 'mod-cta' });
 		play.setCssStyles({ width: '100%' });
@@ -875,13 +873,6 @@ export class SwordModal extends Modal {
 		const prev = d.swordBest;
 		const newRecord = won && (prev <= 0 || time < prev);
 		if (newRecord) d.swordBest = time;
-		// כל משחק נשלח, גם כזה שנכשל: אז נשלחים השלב ומספר המפלצות שהובסו
-		void submitScore(this.plugin, 'sword', {
-			done: won,
-			level: this.level,
-			value: won ? time : this.kills,
-			gear: BLADES[this.blade]?.name ?? '',
-		});
 		d.swordGames += 1;
 		void this.plugin.saveBlastData();
 		if (won) {

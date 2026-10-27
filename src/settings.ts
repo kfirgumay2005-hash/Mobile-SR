@@ -1,14 +1,12 @@
 import {
 	AbstractInputSuggest,
 	App,
-	Notice,
 	PluginSettingTab,
 	Setting,
 	TFolder,
 } from 'obsidian';
 import SpacedRepetitionPlugin from './main';
 import type { GameId, GameMusicConfig } from './music';
-import { USERNAME_RE, onlineAvailable, registerUsername } from './online';
 
 export type DuplicateMode = 'exact' | 'firstLine';
 
@@ -76,12 +74,6 @@ export interface SpacedRepetitionSettings {
 	// מפתח סודי שפותח את כל העיצובים וכלי הנשק (ראו rewards.ts). אין לו ממשק
 	unlockKey?: string;
 	musicVolume: number;
-	// ---- טבלת שיאים משותפת (ראו online.ts); כבוי כברירת מחדל ----
-	onlineShare: boolean;
-	// שם המשתמש הקבוע (נרשם בשרת פעם אחת) והשם המוצג (חופשי)
-	onlineUsername?: string;
-	onlineName: string;
-	onlineId?: string;
 	gameMusic?: Partial<Record<GameId, GameMusicConfig>>;
 }
 
@@ -107,8 +99,6 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	aliensWeapon: -1,
 	swordBlade: -1,
 	musicVolume: 0.5,
-	onlineShare: false,
-	onlineName: '',
 };
 
 // מחלקה המציגה רשימת תיקיות קיימות מהכספת עם אפשרות חיפוש
@@ -401,98 +391,6 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
-
-		if (onlineAvailable()) {
-			const username = this.plugin.settings.onlineUsername ?? '';
-
-			if (username === '') {
-				// שם המשתמש נבחר פעם אחת וננעל; עד אז השיתוף נעול
-				let wanted = '';
-				new Setting(containerEl)
-					.setName('Leaderboard username')
-					.setDesc(
-						'Choose a username to unlock sharing. It is unique, it is shown next to your results, and once you lock it it can never be changed. Use 3 to 16 characters: a-z, 0-9 and underscore. Your display name stays free to change.',
-					)
-					.addText((text) =>
-						text.onChange((value) => {
-							wanted = value;
-						}),
-					)
-					.addButton((btn) =>
-						btn
-							.setButtonText('Lock username')
-							.setWarning()
-							.onClick(async () => {
-								const name = wanted.trim().toLowerCase();
-								if (!USERNAME_RE.test(name)) {
-									new Notice(
-										'A username is 3 to 16 characters: a-z, 0-9 and underscore.',
-									);
-									return;
-								}
-								btn.setDisabled(true);
-								const error = await registerUsername(
-									this.plugin,
-									name,
-								);
-								if (error) {
-									new Notice(error);
-									btn.setDisabled(false);
-									return;
-								}
-								new Notice(
-									`Username locked: ${this.plugin.settings.onlineUsername ?? name}`,
-								);
-								this.display();
-							}),
-					);
-			} else {
-				new Setting(containerEl)
-					.setName('Leaderboard username')
-					.setDesc(
-						'Your permanent username. It cannot be changed. It is tied to this device through an ID saved in the plugin settings, so keep that file if you reinstall.',
-					)
-					.addText((text) =>
-						text.setValue(username).setDisabled(true),
-					);
-
-				new Setting(containerEl)
-					.setName('Display name')
-					.setDesc(
-						'The name shown on the leaderboard, above your username. Change it whenever you like (up to 20 characters); the new name appears after your next game.',
-					)
-					.addText((text) =>
-						text
-							.setPlaceholder(username)
-							.setValue(this.plugin.settings.onlineName)
-							.onChange(async (value) => {
-								this.plugin.settings.onlineName = value
-									.trim()
-									.substring(0, 20);
-								await this.plugin.saveSettings();
-							}),
-					);
-			}
-
-			new Setting(containerEl)
-				.setName('Share my records online')
-				.setDesc(
-					username === ''
-						? 'Locked until you choose a username above.'
-						: 'Off by default. When on, finishing a game sends your display name, the result and the weapon, sword or ship you used to the shared leaderboard, together with a random ID created on this device. Every finished game counts, including one lost on the first level. Nothing from your notes, cards or review schedule is ever sent.',
-				)
-				.addToggle((toggle) =>
-					toggle
-						.setValue(
-							username !== '' && this.plugin.settings.onlineShare,
-						)
-						.setDisabled(username === '')
-						.onChange(async (value) => {
-							this.plugin.settings.onlineShare = value;
-							await this.plugin.saveSettings();
-						}),
-				);
-		}
 
 		new Setting(containerEl)
 			.setName('Blast Data Folder Path')

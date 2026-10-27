@@ -1,8 +1,0 @@
-name = "mobile-sr-leaderboard"
-main = "index.js"
-compatibility_date = "2025-01-01"
-
-[[d1_databases]]
-binding = "DB"
-database_name = "mobile-sr-leaderboard"
-database_id = "c7b4af23-1888-4c10-a31e-d6bf6441bf42"
