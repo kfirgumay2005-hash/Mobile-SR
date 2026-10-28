@@ -3,7 +3,7 @@
 	"name": "Mobile-SR",
 	"version": "2.1.0",
 	"minAppVersion": "1.8.0",
-	"description": "The best spaced repetition plugin with mobile support.",
+	"description": "FSRS Spaced Repetition plugin with games and full mobile support.",
 	"author": "KfirG",
 	"authorUrl": "https://github.com/kfirgumay2005-hash",
 	"isDesktopOnly": false
