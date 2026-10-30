@@ -95,8 +95,9 @@ Works with remotes that send swipes and taps to the phone (the kind sold for scr
 - Text in two languages within one card is read part by part, each with a voice for its language.
 - **Voice engines:** the voices built into your device, a free online voice, or Google Cloud Text-to-Speech with your own API key. **Automatic** uses the device voices when the app has them and online speech otherwise (Obsidian on Android has no built-in voices).
 - The next side and the next card are downloaded ahead of time, so there is no wait between cards.
+- **Mute button.** Every review has a speaker button at the top, so you can turn reading off and back on at any moment. Your choice carries over to the next session.
 
-To use Google Cloud, enable the **Cloud Text-to-Speech API** in a Google Cloud project, create an API key, restrict it to that API, and paste it in the settings. **Check key** confirms it works and lists the available voices.
+The API key is optional. Read aloud works without one; you only need it if the free online voice fails, for example behind a VPN or on another shared network. To use Google Cloud, enable the **Cloud Text-to-Speech API** in a Google Cloud project, create an API key, restrict it to that API, and paste it in the settings. **Check key** confirms it works and lists the available voices.
 
 ## Network use and privacy
 
@@ -108,7 +109,7 @@ The only network use is the optional read aloud feature, and only when it uses o
 
 - **Built for mobile.** Everything works on Android and iOS: reviews, the dashboard and all five games.
 - **Hands-free reviews.** Rate cards with a Bluetooth remote and have them read aloud (see above).
-- **FSRS scheduling.** Cards come back just before you would forget them. The classic SM-2 algorithm is available too.
+- **FSRS scheduling.** Cards come back just before you would forget them.
 - **Plain Markdown cards.** A deck is just a note. No special editor and no lock-in.
 - **Syncs like a note.** Your progress is stored in a Markdown file inside the vault, so any sync that handles your notes also carries your review schedule between devices.
 - **Dashboard.** See every deck with its due cards, start a session for one deck, and search a table of everything you have reviewed with its next due time.
@@ -175,7 +176,6 @@ Select the plugin's icon in the ribbon, or run **Open Spaced Repetition Dashboar
 
 | Setting                              | What it does                                                                                                                      |
 | ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------- |
-| Algorithm                            | FSRS or SM-2. The plugin was built around FSRS, so that is the recommended choice.                                                |
 | Target request retention             | How likely you want to be to remember a card when it comes up. Higher means more frequent reviews.                                |
 | Maximum interval                     | The longest gap, in days, allowed between two reviews of a card.                                                                  |
 | Flashcard deck tags / Hint deck tags | The tags that mark a note as a deck or as a hint deck.                                                                            |

@@ -6,6 +6,7 @@ import {
 	TFile,
 	MarkdownRenderer,
 	Component,
+	setIcon,
 } from 'obsidian';
 import {
 	SpacedRepetitionSettings,
@@ -79,7 +80,6 @@ export interface CardSchedulingMetadata {
 	cardId: string;
 	due: number;
 	interval: number;
-	ease: number;
 	difficulty: number;
 	stability: number;
 	lapses: number;
@@ -125,7 +125,6 @@ export class SRSEngine {
 			cardId: '',
 			due: now,
 			interval: 0,
-			ease: 2.5,
 			difficulty: 5.0,
 			stability: 0.0,
 			lapses: 0,
@@ -133,54 +132,7 @@ export class SRSEngine {
 			lastReview: now,
 		};
 
-		if (settings.algorithm === 'SM2') {
-			return this.calculateSM2(existing, rating, now);
-		} else {
-			return this.calculateFSRS(existing, rating, now, settings);
-		}
-	}
-
-	private static calculateSM2(
-		meta: CardSchedulingMetadata,
-		rating: Rating,
-		now: number,
-	): CardSchedulingMetadata {
-		let ease = meta.ease;
-		let interval = meta.interval;
-		let repetition = meta.repetition;
-		let lapses = meta.lapses;
-
-		const q = rating === 1 ? 1 : rating === 2 ? 3 : rating === 3 ? 4 : 5;
-
-		if (q < 3) {
-			repetition = 0;
-			interval = 1;
-			lapses += 1;
-		} else {
-			if (repetition === 0) {
-				interval = 1;
-			} else if (repetition === 1) {
-				interval = 6;
-			} else {
-				interval = Math.round(interval * ease);
-			}
-			repetition += 1;
-		}
-
-		ease = ease + (0.1 - (5 - q) * (0.08 + (5 - q) * 0.02));
-		if (ease < 1.3) ease = 1.3;
-
-		const due = now + interval * 24 * 60 * 60 * 1000;
-
-		return {
-			...meta,
-			due,
-			interval,
-			ease,
-			repetition,
-			lapses,
-			lastReview: now,
-		};
+		return this.calculateFSRS(existing, rating, now, settings);
 	}
 
 	private static calculateFSRS(
@@ -490,12 +442,43 @@ export class ReviewModal extends Modal {
 			});
 			this.remote.attach(this.plugin);
 		}
-		if (this.plugin.settings.ttsEnabled) {
-			this.speaker = new Speaker(() => this.plugin.settings);
-			// החלון נפתח מלחיצה, אז כאן מותר להפעיל את השמע
-			this.speaker.unlock();
-		}
+		if (this.plugin.settings.ttsEnabled) this.startSpeaker();
 		void this.renderCurrentCard();
+	}
+
+	// רק מתוך לחיצה (פתיחת החלון, כפתור ההשתקה), כי רק אז מותר להפעיל את השמע
+	private startSpeaker(): void {
+		this.speaker = new Speaker(() => this.plugin.settings);
+		this.speaker.unlock();
+	}
+
+	// כפתור ההשתקה משנה את אותה הגדרה של "Read cards aloud", ולכן הבחירה נשמרת לסשן הבא
+	private setReadAloud(on: boolean): void {
+		this.plugin.settings.ttsEnabled = on;
+		void this.plugin.saveSettings();
+		this.speaker?.dispose();
+		this.speaker = null;
+		if (!on) return;
+		// מה שקרה בזמן ההשתקה לא נאמר, ומקריאים את הצד שמוצג עכשיו
+		this.announce = '';
+		this.spokenKey = '';
+		this.startSpeaker();
+		this.speakCurrent();
+	}
+
+	private renderMuteButton(parent: HTMLElement): void {
+		const btn = parent.createEl('button');
+		const paint = (): void => {
+			const on = this.plugin.settings.ttsEnabled;
+			btn.empty();
+			setIcon(btn, on ? 'volume-2' : 'volume-x');
+			btn.setAttr('aria-label', on ? 'Mute' : 'Unmute');
+		};
+		paint();
+		btn.onclick = () => {
+			this.setReadAloud(!this.plugin.settings.ttsEnabled);
+			paint();
+		};
 	}
 
 	onClose(): void {
@@ -537,7 +520,9 @@ export class ReviewModal extends Modal {
 		if (action === 'prev') return this.goBack();
 		if (action === 'repeat') {
 			if (!this.speaker) {
-				new Notice('Read aloud is off. Turn it on in the settings.');
+				new Notice(
+					'Read aloud is muted. Select the speaker button to turn it on.',
+				);
 				return null;
 			}
 			this.speakCurrent(true);
@@ -703,6 +688,8 @@ export class ReviewModal extends Modal {
 			display: 'flex',
 			justifyContent: 'space-between',
 			alignItems: 'center',
+			flexWrap: 'wrap',
+			gap: '8px',
 			marginBottom: '1em',
 		});
 
@@ -715,9 +702,14 @@ export class ReviewModal extends Modal {
 			cls: 'srs-card-progress',
 		});
 
+		const headerActions = headerEl.createDiv();
+		headerActions.setCssStyles({ display: 'flex', gap: '8px' });
+
+		this.renderMuteButton(headerActions);
+
 		// לכרטיסי המדריך אין קובץ, אז אין מה לערוך
 		if (!this.practice) {
-			const editBtn = headerEl.createEl('button', {
+			const editBtn = headerActions.createEl('button', {
 				text: this.isEditing ? 'Cancel Edit' : 'Edit Card',
 			});
 			editBtn.onclick = () => {

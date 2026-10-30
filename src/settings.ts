@@ -49,7 +49,6 @@ export const defaultBlastData = (): BlastData => ({
 });
 
 export interface SpacedRepetitionSettings {
-	algorithm: 'FSRS' | 'SM2';
 	requestRetention: number;
 	maximumInterval: number;
 	fsrsWeights: number[];
@@ -103,7 +102,6 @@ export interface SpacedRepetitionSettings {
 }
 
 export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
-	algorithm: 'FSRS',
 	requestRetention: 0.9,
 	maximumInterval: 3650,
 	fsrsWeights: [
@@ -228,26 +226,6 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 					.setCta()
 					.onClick(async () => {
 						await this.plugin.applyDataLocation();
-					}),
-			);
-
-		new Setting(containerEl)
-			.setName('Spaced Repetition Algorithm')
-			.setHeading();
-
-		new Setting(containerEl)
-			.setName('Scheduling Algorithm')
-			.setDesc('Select the spaced repetition algorithm.')
-			.addDropdown((dropdown) =>
-				dropdown
-					.addOption('FSRS', 'FSRS v4.5 (Recommended)')
-					.addOption('SM2', 'SM-2 (Classic)')
-					.setValue(this.plugin.settings.algorithm)
-					.onChange(async (value) => {
-						this.plugin.settings.algorithm = value as
-							'FSRS' | 'SM2';
-						await this.plugin.saveSettings();
-						this.display();
 					}),
 			);
 
@@ -495,55 +473,52 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 					}),
 			);
 
-		if (this.plugin.settings.algorithm === 'FSRS') {
+		new Setting(containerEl)
+			.setName('FSRS Model Weights (Advanced)')
+			.setHeading();
+
+		containerEl.createEl('p', {
+			text: 'These 17 weights control the math behind your memory decay. It is highly recommended NOT to change these unless you have generated optimized weights from an external tracker (like Anki).',
+			cls: 'setting-item-description',
+		});
+
+		const weightDescriptions = [
+			"W0: Initial Stability (Again) - Higher value = longer initial wait after pressing 'Again'. (Range: 0.1 - 40.0)",
+			"W1: Initial Stability (Hard) - Higher value = longer initial wait after pressing 'Hard'. (Range: 0.1 - 40.0)",
+			"W2: Initial Stability (Good) - Higher value = longer initial wait after pressing 'Good'. (Range: 0.1 - 40.0)",
+			"W3: Initial Stability (Easy) - Higher value = longer initial wait after pressing 'Easy'. (Range: 0.1 - 40.0)",
+			'W4: Initial Difficulty - Higher value = new cards are treated as harder, so future intervals will grow slower. (Range: 1.0 - 10.0)',
+			"W5: Difficulty Multiplier - Higher value = your very first rating (Good/Hard) alters the card's difficulty more drastically. (Range: 0.01 - 5.0)",
+			"W6: Difficulty Drift - Higher value = the card's difficulty adapts faster based on your future ratings. (Range: 0.01 - 5.0)",
+			'W7: Stability Tuning - Internal mathematical tuning parameter (leave default). (Range: 0.0 - 0.5)',
+			'W8: Stability Increase Base - Higher value = intervals grow much faster after correct answers. (Range: 0.0 - 3.0)',
+			'W9: Stability Decay - Higher value = intervals grow slower if the card is already highly stable. (Range: 0.0 - 1.0)',
+			'W10: Retrievability Multiplier - Higher value = remembering a card you were just about to forget gives a massive interval boost. (Range: 0.01 - 2.0)',
+			"W11: Lapse Stability Base - Higher value = you retain more stability (longer next interval) even after pressing 'Again'. (Range: 0.01 - 5.0)",
+			'W12: Lapse Difficulty Penalty - Higher value = forgetting a card punishes its future interval growth more. (Range: 0.01 - 0.5)',
+			'W13: Lapse Stability Decay - Higher value = highly stable cards lose a lot more stability when forgotten. (Range: 0.01 - 1.0)',
+			'W14: Lapse Retrievability Multiplier - Higher value = forgetting a card long after its due date retains more stability. (Range: 0.01 - 4.0)',
+			"W15: Hard Penalty - Higher value = punishes interval growth more heavily when you press 'Hard'. (Range: 0.0 - 1.0)",
+			"W16: Easy Bonus - Higher value = rewards interval growth more heavily when you press 'Easy'. (Range: 1.0 - 4.0)",
+		];
+
+		weightDescriptions.forEach((desc, index) => {
 			new Setting(containerEl)
-				.setName('FSRS Model Weights (Advanced)')
-				.setHeading();
-
-			containerEl.createEl('p', {
-				text: 'These 17 weights control the math behind your memory decay. It is highly recommended NOT to change these unless you have generated optimized weights from an external tracker (like Anki).',
-				cls: 'setting-item-description',
-			});
-
-			const weightDescriptions = [
-				"W0: Initial Stability (Again) - Higher value = longer initial wait after pressing 'Again'. (Range: 0.1 - 40.0)",
-				"W1: Initial Stability (Hard) - Higher value = longer initial wait after pressing 'Hard'. (Range: 0.1 - 40.0)",
-				"W2: Initial Stability (Good) - Higher value = longer initial wait after pressing 'Good'. (Range: 0.1 - 40.0)",
-				"W3: Initial Stability (Easy) - Higher value = longer initial wait after pressing 'Easy'. (Range: 0.1 - 40.0)",
-				'W4: Initial Difficulty - Higher value = new cards are treated as harder, so future intervals will grow slower. (Range: 1.0 - 10.0)',
-				"W5: Difficulty Multiplier - Higher value = your very first rating (Good/Hard) alters the card's difficulty more drastically. (Range: 0.01 - 5.0)",
-				"W6: Difficulty Drift - Higher value = the card's difficulty adapts faster based on your future ratings. (Range: 0.01 - 5.0)",
-				'W7: Stability Tuning - Internal mathematical tuning parameter (leave default). (Range: 0.0 - 0.5)',
-				'W8: Stability Increase Base - Higher value = intervals grow much faster after correct answers. (Range: 0.0 - 3.0)',
-				'W9: Stability Decay - Higher value = intervals grow slower if the card is already highly stable. (Range: 0.0 - 1.0)',
-				'W10: Retrievability Multiplier - Higher value = remembering a card you were just about to forget gives a massive interval boost. (Range: 0.01 - 2.0)',
-				"W11: Lapse Stability Base - Higher value = you retain more stability (longer next interval) even after pressing 'Again'. (Range: 0.01 - 5.0)",
-				'W12: Lapse Difficulty Penalty - Higher value = forgetting a card punishes its future interval growth more. (Range: 0.01 - 0.5)',
-				'W13: Lapse Stability Decay - Higher value = highly stable cards lose a lot more stability when forgotten. (Range: 0.01 - 1.0)',
-				'W14: Lapse Retrievability Multiplier - Higher value = forgetting a card long after its due date retains more stability. (Range: 0.01 - 4.0)',
-				"W15: Hard Penalty - Higher value = punishes interval growth more heavily when you press 'Hard'. (Range: 0.0 - 1.0)",
-				"W16: Easy Bonus - Higher value = rewards interval growth more heavily when you press 'Easy'. (Range: 1.0 - 4.0)",
-			];
-
-			weightDescriptions.forEach((desc, index) => {
-				new Setting(containerEl)
-					.setName(`Weight ${index}`)
-					.setDesc(desc)
-					.addText((text) =>
-						text
-							.setValue(
-								String(this.plugin.settings.fsrsWeights[index]),
-							)
-							.onChange(async (value) => {
-								const val = parseFloat(value);
-								if (!isNaN(val)) {
-									this.plugin.settings.fsrsWeights[index] =
-										val;
-									await this.plugin.saveSettings();
-								}
-							}),
-					);
-			});
-		}
+				.setName(`Weight ${index}`)
+				.setDesc(desc)
+				.addText((text) =>
+					text
+						.setValue(
+							String(this.plugin.settings.fsrsWeights[index]),
+						)
+						.onChange(async (value) => {
+							const val = parseFloat(value);
+							if (!isNaN(val)) {
+								this.plugin.settings.fsrsWeights[index] = val;
+								await this.plugin.saveSettings();
+							}
+						}),
+				);
+		});
 	}
 }

@@ -510,7 +510,7 @@ export function renderSpeechSettings(
 		new Setting(cloudEl)
 			.setName('API key for cloud speech')
 			.setDesc(
-				'For Google Cloud Text-to-Speech. Enable the Cloud Text-to-Speech API in a Google Cloud project, create an API key and restrict it to that API. The key is stored in data.json in the plugin folder, which syncs with your vault.',
+				'Optional. Read aloud works without a key; you only need one if the free online speech fails, for example behind a VPN or on another shared network. For Google Cloud Text-to-Speech, enable the Cloud Text-to-Speech API in a Google Cloud project, create an API key and restrict it to that API. The key is stored in data.json in the plugin folder, which syncs with your vault.',
 			)
 			.addText((t) => {
 				t.inputEl.type = 'password';
