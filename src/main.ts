@@ -19,6 +19,15 @@ import { MatchModal } from './match';
 import { HangmanModal } from './hangman';
 import { AliensModal } from './aliens';
 import { SwordModal } from './sword';
+import {
+	RemoteInput,
+	RemoteLoggerModal,
+	buildRemoteTutorialCards,
+	gestureLabel,
+	remoteActionFor,
+	type RemoteAction,
+} from './remote';
+import { Speaker } from './speech';
 import type { GameId } from './music';
 import { checkUnlockKey } from './rewards';
 
@@ -394,6 +403,32 @@ export class FlashcardParser {
 // 4. UI Modals
 // ============================================================================
 
+// צעד קדימה ב-review: advanced = currentIndex התקדם, moved = הכרטיס הועבר לסוף התור
+interface ReviewStep {
+	card: Flashcard;
+	kind: 'advanced' | 'moved';
+}
+
+// פעולות שנאמרות בקול לפני הכרטיס הבא (בהפיכה ההקראה של התשובה היא האישור)
+const ANNOUNCED = new Set<RemoteAction>([
+	'again',
+	'hard',
+	'good',
+	'easy',
+	'next',
+	'prev',
+]);
+
+const REMOTE_RATINGS: Record<
+	'again' | 'hard' | 'good' | 'easy',
+	{ value: Rating; label: string }
+> = {
+	again: { value: 1, label: 'Again' },
+	hard: { value: 2, label: 'Hard' },
+	good: { value: 3, label: 'Good' },
+	easy: { value: 4, label: 'Easy' },
+};
+
 export class ReviewModal extends Modal {
 	private plugin: SpacedRepetitionPlugin;
 	private queue: Flashcard[];
@@ -404,33 +439,230 @@ export class ReviewModal extends Modal {
 	private isHintShown: boolean = false;
 	private isEditing: boolean = false;
 	private component: Component;
+	// שלט רחוק (ראו remote.ts); פעיל רק כל עוד החלון פתוח
+	private remote: RemoteInput | null = null;
+	// הקראה בקול (ראו speech.ts); null כשההקראה כבויה
+	private speaker: Speaker | null = null;
+	// הצד שכבר הוקרא (מזהה כרטיס + צד), כדי לא להקריא שוב בכל ציור מחדש
+	private spokenKey: string = '';
+	// מה שהשלט עשה, נאמר לפני הכרטיס הבא
+	private announce: string = '';
+	// מדריך השלט: כרטיסים שנוצרו בזיכרון, ושום דירוג לא נשמר
+	private practice: boolean;
+	private isRating: boolean = false;
+	// צעדים קדימה, כדי ש-"כרטיס קודם" יוכל לחזור אחורה
+	private history: ReviewStep[] = [];
+	// כרטיסים שדורגו בסשן הזה ומה היה המצב שלהם לפני הדירוג,
+	// כך שדירוג חוזר (אחרי "כרטיס קודם") מחליף את הדירוג הקודם במקום להוסיף עוד אחד
+	private ratedBefore = new Map<
+		Flashcard,
+		{ before: CardSchedulingMetadata | undefined; label: string }
+	>();
 
 	constructor(
 		app: App,
 		plugin: SpacedRepetitionPlugin,
 		queue: Flashcard[],
 		deckCards: Flashcard[],
+		practice: boolean = false,
 	) {
 		super(app);
 		this.plugin = plugin;
 		this.queue = queue;
 		this.deckCards = deckCards;
+		this.practice = practice;
 		this.component = new Component();
 	}
 
 	onOpen(): void {
 		this.component.load();
 		this.modalEl.addClass('srs-review-modal-wrapper');
+		// במדריך השלט פעיל תמיד, גם אם כובה בהגדרות
+		if (this.plugin.settings.remoteEnabled || this.practice) {
+			this.remote = new RemoteInput({
+				settings: () => this.plugin.settings,
+				// במדריך גם הקשה לא מקושרת נתפסת, כדי להראות שהיא הגיעה
+				wants: (g) =>
+					!this.isEditing &&
+					(remoteActionFor(this.plugin.settings, g) !== null ||
+						(this.practice && (g === 'TAP' || g === 'DOUBLE_TAP'))),
+				onGesture: (g) => this.onRemoteGesture(g),
+			});
+			this.remote.attach(this.plugin);
+		}
+		if (this.plugin.settings.ttsEnabled) {
+			this.speaker = new Speaker(() => this.plugin.settings);
+			// החלון נפתח מלחיצה, אז כאן מותר להפעיל את השמע
+			this.speaker.unlock();
+		}
 		void this.renderCurrentCard();
 	}
 
 	onClose(): void {
+		this.remote?.detach();
+		this.remote = null;
+		this.speaker?.dispose();
+		this.speaker = null;
 		this.component.unload();
 		this.contentEl.empty();
 	}
 
+	private onRemoteGesture(g: string): void {
+		const action = remoteActionFor(this.plugin.settings, g);
+		if (this.isEditing || this.isRating) return;
+		if (!action) {
+			if (this.practice) {
+				new Notice(`${gestureLabel(g)}: not bound`, 1500);
+			}
+			return;
+		}
+		const done = this.runRemoteAction(action);
+		if (done && this.plugin.settings.ttsAnnounce && ANNOUNCED.has(action)) {
+			this.announce = done;
+		}
+		// במדריך תמיד מראים גם איזו מחווה זוהתה
+		if (done && this.practice) {
+			new Notice(`${gestureLabel(g)}: ${done}`, 1500);
+		} else if (done && this.plugin.settings.remoteToast) {
+			new Notice(done, 1200);
+		}
+	}
+
+	// מבצע פעולה של השלט. מחזיר טקסט להודעה, או null אם לא קרה כלום
+	private runRemoteAction(action: RemoteAction): string | null {
+		if (action === 'exit') {
+			this.close();
+			return 'Review closed';
+		}
+		if (action === 'prev') return this.goBack();
+		if (action === 'repeat') {
+			if (!this.speaker) {
+				new Notice('Read aloud is off. Turn it on in the settings.');
+				return null;
+			}
+			this.speakCurrent(true);
+			return 'Reading again';
+		}
+
+		const card = this.queue[this.currentIndex];
+		if (!card) return null;
+
+		if (action === 'flip') {
+			this.isAnswerShown = !this.isAnswerShown;
+			void this.renderCurrentCard();
+			return this.isAnswerShown ? 'Answer shown' : 'Answer hidden';
+		}
+		if (action === 'next') return this.skipCard(card);
+		if (action === 'hint') {
+			if (card.hint === '') {
+				this.tell('This card has no hint.');
+				return null;
+			}
+			this.isHintShown = true;
+			void this.renderCurrentCard();
+			this.speaker?.speak(card.hint);
+			return 'Hint shown';
+		}
+
+		const rating = REMOTE_RATINGS[action];
+		if (!this.isAnswerShown) {
+			this.tell('Show the answer before rating.');
+			return null;
+		}
+		const nextMeta = SRSEngine.calculateNextState(
+			this.metaBeforeRating(card),
+			rating.value,
+			this.plugin.settings,
+		);
+		void this.applyRating(card, nextMeta, rating.label);
+		return rating.label;
+	}
+
+	// דילוג בלי דירוג: הכרטיס עובר לסוף התור (כרטיס שכבר דורג פשוט נשאר מאחור)
+	private skipCard(card: Flashcard): string | null {
+		if (this.ratedBefore.has(card)) {
+			this.history.push({ card, kind: 'advanced' });
+			this.currentIndex++;
+		} else {
+			if (this.currentIndex >= this.queue.length - 1) {
+				this.tell('This is the last card.');
+				return null;
+			}
+			this.queue.splice(this.currentIndex, 1);
+			this.queue.push(card);
+			this.history.push({ card, kind: 'moved' });
+		}
+		this.isAnswerShown = false;
+		this.isHintShown = false;
+		void this.renderCurrentCard();
+		return 'Skipped';
+	}
+
+	private goBack(): string | null {
+		const step = this.history.pop();
+		if (!step) {
+			this.tell('No previous card.');
+			return null;
+		}
+		if (step.kind === 'advanced') {
+			this.currentIndex--;
+		} else {
+			// הכרטיס שדולג נמצא בסוף התור - מחזירים אותו למקום הנוכחי
+			const at = this.queue.lastIndexOf(step.card);
+			if (at >= 0) this.queue.splice(at, 1);
+			this.queue.splice(this.currentIndex, 0, step.card);
+		}
+		this.isAnswerShown = this.ratedBefore.has(step.card);
+		this.isHintShown = false;
+		void this.renderCurrentCard();
+		return 'Previous card';
+	}
+
+	// הודעה שגם נאמרת בקול, כי בזמן הליכה לא מסתכלים על המסך
+	private tell(msg: string): void {
+		new Notice(msg, 1500);
+		this.speaker?.speak(msg);
+	}
+
+	// מקריא את הצד המוצג של הכרטיס, פעם אחת לכל צד (force = הקראה חוזרת)
+	private speakCurrent(force = false): void {
+		const speaker = this.speaker;
+		if (!speaker) return;
+		const card = this.queue[this.currentIndex];
+		const key = card ? `${card.id}:${this.isAnswerShown}` : 'done';
+		if (!force && key === this.spokenKey) return;
+		this.spokenKey = key;
+		const pre = this.announce ? `${this.announce}. ` : '';
+		this.announce = '';
+
+		const next = this.queue[this.currentIndex + 1];
+		if (!card) {
+			speaker.speak(`${pre}Deck completed.`);
+		} else if (!this.isAnswerShown) {
+			speaker.speak(pre + displayFront(card));
+			// מורידים מראש את מה שכנראה יוקרא אחר כך, כדי שלא יהיה המתנה
+			if (this.plugin.settings.ttsReadAnswer) speaker.prefetch(card.back);
+		} else if (this.plugin.settings.ttsReadAnswer || force) {
+			speaker.speak(pre + card.back);
+		} else if (pre) {
+			speaker.speak(pre);
+		}
+		if (card && this.isAnswerShown && next) {
+			speaker.prefetch(displayFront(next));
+		}
+	}
+
+	// המצב שממנו מחשבים דירוג: לכרטיס שכבר דורג בסשן - המצב שלפני הדירוג ההוא
+	private metaBeforeRating(
+		card: Flashcard,
+	): CardSchedulingMetadata | undefined {
+		const rated = this.ratedBefore.get(card);
+		return rated ? rated.before : this.plugin.store[card.id];
+	}
+
 	// כרטיסים שלא צריך לבצע להם review כרגע (מועד הבדיקה הבא שלהם בעתיד)
 	private getCompletedCount(): number {
+		if (this.practice) return this.ratedBefore.size;
 		const now = Date.now();
 		return this.deckCards.filter((c) => {
 			const meta = this.plugin.store[c.id];
@@ -441,6 +673,8 @@ export class ReviewModal extends Modal {
 	private async renderCurrentCard(): Promise<void> {
 		const { contentEl } = this;
 		contentEl.empty();
+		// אחרי שהפעולה הנוכחית מסתיימת, כדי שההודעה (announce) כבר תהיה מוכנה
+		if (this.speaker) window.setTimeout(() => this.speakCurrent(), 0);
 
 		if (this.currentIndex >= this.queue.length) {
 			contentEl.createEl('h2', { text: '✨ Deck Completed!' });
@@ -461,7 +695,8 @@ export class ReviewModal extends Modal {
 		const card = this.queue[this.currentIndex];
 		if (!card) return;
 
-		const cardMeta = this.plugin.store[card.id];
+		const cardMeta = this.metaBeforeRating(card);
+		const earlier = this.ratedBefore.get(card);
 
 		const headerEl = contentEl.createDiv({ cls: 'srs-header-bar' });
 		headerEl.setCssStyles({
@@ -480,13 +715,16 @@ export class ReviewModal extends Modal {
 			cls: 'srs-card-progress',
 		});
 
-		const editBtn = headerEl.createEl('button', {
-			text: this.isEditing ? 'Cancel Edit' : 'Edit Card',
-		});
-		editBtn.onclick = () => {
-			this.isEditing = !this.isEditing;
-			void this.renderCurrentCard();
-		};
+		// לכרטיסי המדריך אין קובץ, אז אין מה לערוך
+		if (!this.practice) {
+			const editBtn = headerEl.createEl('button', {
+				text: this.isEditing ? 'Cancel Edit' : 'Edit Card',
+			});
+			editBtn.onclick = () => {
+				this.isEditing = !this.isEditing;
+				void this.renderCurrentCard();
+			};
+		}
 
 		const bodyEl = contentEl.createDiv({ cls: 'srs-card-body' });
 		bodyEl.setCssStyles({
@@ -558,6 +796,17 @@ export class ReviewModal extends Modal {
 				card.filePath,
 				this.component,
 			);
+		}
+
+		if (earlier) {
+			const note = contentEl.createDiv({
+				text: `Rated ${earlier.label} earlier in this session. Rating it again replaces that rating.`,
+			});
+			note.setCssStyles({
+				marginTop: '0.75em',
+				fontSize: '0.85em',
+				opacity: '0.75',
+			});
 		}
 
 		const bottomBar = contentEl.createDiv({ cls: 'srs-bottom-bar' });
@@ -634,7 +883,7 @@ export class ReviewModal extends Modal {
 				}
 
 				btn.onclick = () => {
-					void this.applyRating(card, nextMeta);
+					void this.applyRating(card, nextMeta, item.label);
 				};
 			}
 		}
@@ -643,8 +892,9 @@ export class ReviewModal extends Modal {
 	private async applyRating(
 		card: Flashcard,
 		nextMeta: CardSchedulingMetadata,
+		label: string,
 	): Promise<void> {
-		const prev = this.plugin.store[card.id];
+		const prev = this.metaBeforeRating(card);
 		const reviewedAt = Date.now();
 
 		// כרטיסים ישנים שאין להם עדיין היסטוריה - מתחילים מהמידע הקיים
@@ -658,8 +908,18 @@ export class ReviewModal extends Modal {
 		nextMeta.reviewHistory = [...prevHistory, reviewedAt];
 		nextMeta.reviewCount = prevCount + 1;
 
-		this.plugin.store[card.id] = nextMeta;
-		await this.plugin.saveCardStore();
+		this.ratedBefore.set(card, { before: prev, label });
+		this.history.push({ card, kind: 'advanced' });
+		// במדריך לא שומרים כלום - לא ללוח הזמנים ולא לספירת הפתיחות
+		if (!this.practice) {
+			this.plugin.store[card.id] = nextMeta;
+			this.isRating = true;
+			try {
+				await this.plugin.saveCardStore();
+			} finally {
+				this.isRating = false;
+			}
+		}
 		this.currentIndex++;
 		this.isAnswerShown = false;
 		this.isHintShown = false;
@@ -1232,6 +1492,20 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'open-remote-tutorial',
+			name: 'Remote: start tutorial',
+			callback: () => this.openRemoteTutorial(),
+		});
+
+		this.addCommand({
+			id: 'open-remote-input-logger',
+			name: 'Remote: open input logger',
+			callback: () => {
+				new RemoteLoggerModal(this.app, this).open();
+			},
+		});
+
+		this.addCommand({
 			id: 'fix-cards-and-remove-duplicates',
 			name: 'Fix Cards Spacing and Remove Duplicates',
 			callback: async () => {
@@ -1240,6 +1514,12 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		});
 
 		this.addSettingTab(new SpacedRepetitionSettingTab(this.app, this));
+	}
+
+	// מדריך השלט: review אמיתי על דק שנוצר בזיכרון, בלי קובץ ובלי שמירת דירוגים
+	public openRemoteTutorial(): void {
+		const cards = buildRemoteTutorialCards(this.settings);
+		new ReviewModal(this.app, this, [...cards], cards, true).open();
 	}
 
 	public getDataFilePath(): string {

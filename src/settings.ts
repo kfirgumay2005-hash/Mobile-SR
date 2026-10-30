@@ -7,6 +7,8 @@ import {
 } from 'obsidian';
 import SpacedRepetitionPlugin from './main';
 import type { GameId, GameMusicConfig } from './music';
+import { renderRemoteSettings, type RemotePreset } from './remote';
+import { renderSpeechSettings, type SpeechEngine } from './speech';
 
 export type DuplicateMode = 'exact' | 'firstLine';
 
@@ -75,6 +77,29 @@ export interface SpacedRepetitionSettings {
 	unlockKey?: string;
 	musicVolume: number;
 	gameMusic?: Partial<Record<GameId, GameMusicConfig>>;
+	// ---- שלט רחוק ב-review (ראו remote.ts) ----
+	remoteEnabled: boolean;
+	remoteToast: boolean;
+	remoteAcceptManual: boolean;
+	// הקשה כפולה כקלט נפרד; כבוי = כל הקשה מיידית
+	remoteDoublePress: boolean;
+	// פריסט לכל שלט (קישורים וספים); רק אחד פעיל. ראו remotePresets ב-remote.ts
+	remotePresets?: RemotePreset[];
+	remoteActivePreset?: string;
+	// ---- הקראה בקול ב-review (ראו speech.ts) ----
+	ttsEnabled: boolean;
+	// auto = קולות המכשיר אם יש, אחרת מקוון (ב-Obsidian לאנדרואיד אין קולות מכשיר)
+	ttsEngine: SpeechEngine;
+	ttsReadAnswer: boolean;
+	ttsAnnounce: boolean;
+	ttsRate: number;
+	// voiceURI של הקול שנבחר; ריק = ברירת המחדל של המכשיר
+	ttsVoiceHe: string;
+	ttsVoiceEn: string;
+	// Google Cloud Text-to-Speech: מפתח API, וקול לכל שפה (ריק = ברירת המחדל של Google)
+	ttsGoogleKey: string;
+	ttsCloudVoiceHe: string;
+	ttsCloudVoiceEn: string;
 }
 
 export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
@@ -99,6 +124,20 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	aliensWeapon: -1,
 	swordBlade: -1,
 	musicVolume: 0.5,
+	remoteEnabled: true,
+	remoteToast: true,
+	remoteAcceptManual: false,
+	remoteDoublePress: true,
+	ttsEnabled: false,
+	ttsEngine: 'auto',
+	ttsReadAnswer: true,
+	ttsAnnounce: true,
+	ttsRate: 1,
+	ttsVoiceHe: '',
+	ttsVoiceEn: '',
+	ttsGoogleKey: '',
+	ttsCloudVoiceHe: '',
+	ttsCloudVoiceEn: '',
 };
 
 // מחלקה המציגה רשימת תיקיות קיימות מהכספת עם אפשרות חיפוש
@@ -148,8 +187,17 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 		return [];
 	}
 
+	// עוצר את ההאזנה לשלט (Listen / Test) ואת ההקראה כשההגדרות נסגרות או מצוירות מחדש
+	private remoteCleanup: (() => void) | null = null;
+
+	hide(): void {
+		this.remoteCleanup?.();
+		this.remoteCleanup = null;
+	}
+
 	display(): void {
 		const { containerEl } = this;
+		this.remoteCleanup?.();
 		containerEl.empty();
 
 		new Setting(containerEl).setName('Data Storage Location').setHeading();
@@ -355,6 +403,15 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 						await this.plugin.saveSettings();
 					}),
 			);
+
+		const stopRemote = renderRemoteSettings(containerEl, this.plugin, () =>
+			this.display(),
+		);
+		const stopSpeech = renderSpeechSettings(containerEl, this.plugin);
+		this.remoteCleanup = () => {
+			stopRemote();
+			stopSpeech();
+		};
 
 		new Setting(containerEl)
 			.setName('Games')
