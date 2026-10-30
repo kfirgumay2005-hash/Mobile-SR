@@ -1,9 +1,9 @@
 {
 	"id": "mobilesr",
 	"name": "Mobile-SR",
-	"version": "2.2.0",
+	"version": "2.2.1",
 	"minAppVersion": "1.8.0",
-	"description": "FSRS Spaced Repetition plugin with games and mobile support with text to speech and remote controller",
+	"description": "FSRS Spaced Repetition plugin with games and mobile support with text to speech and remote ring and page-turner support.",
 	"author": "KfirG",
 	"authorUrl": "https://github.com/kfirgumay2005-hash",
 	"isDesktopOnly": false
