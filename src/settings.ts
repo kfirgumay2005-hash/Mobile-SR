@@ -85,6 +85,8 @@ export interface SpacedRepetitionSettings {
 	// פריסט לכל שלט (קישורים וספים); רק אחד פעיל. ראו remotePresets ב-remote.ts
 	remotePresets?: RemotePreset[];
 	remoteActivePreset?: string;
+	// מתי הפריסטים שונו לאחרונה (ms). ראו reconcileRemote ב-remote.ts
+	remoteStamp?: number;
 	// ---- הקראה בקול ב-review (ראו speech.ts) ----
 	ttsEnabled: boolean;
 	// auto = קולות המכשיר אם יש, אחרת מקוון (ב-Obsidian לאנדרואיד אין קולות מכשיר)

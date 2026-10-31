@@ -2,6 +2,7 @@ import {
 	App,
 	Modal,
 	Notice,
+	Platform,
 	Plugin,
 	TFile,
 	MarkdownRenderer,
@@ -25,7 +26,9 @@ import {
 	RemoteLoggerModal,
 	buildRemoteTutorialCards,
 	gestureLabel,
+	reconcileRemote,
 	remoteActionFor,
+	stampRemote,
 	type RemoteAction,
 } from './remote';
 import { Speaker } from './speech';
@@ -1191,7 +1194,12 @@ export class DashboardModal extends Modal {
 		const tableContainer = contentEl.createDiv({
 			cls: 'srs-table-container',
 		});
-		tableContainer.setCssStyles({ maxHeight: '400px', overflowY: 'auto' });
+		// בטלפון תוכן המודאל הוא flex column, ובלי flexShrink מיכל גלילה נמעך עד לגובה 0
+		tableContainer.setCssStyles({
+			maxHeight: '400px',
+			overflowY: 'auto',
+			flexShrink: '0',
+		});
 
 		searchInput.oninput = (e) => {
 			this.filterText = (
@@ -1308,6 +1316,13 @@ export class DashboardModal extends Modal {
 			const th = headerRow.createEl('th', { text: h });
 			th.setCssStyles({ padding: '8px', textAlign: 'left' });
 		});
+		// בטלפון הטבלה רחבה מהמסך: הסטטוס עובר לעמודה השנייה כדי שייראה בלי גלילה הצידה
+		const statusSecond = (tr: HTMLElement): void => {
+			if (Platform.isPhone && tr.lastElementChild) {
+				tr.insertBefore(tr.lastElementChild, tr.children[1] ?? null);
+			}
+		};
+		statusSecond(headerRow);
 
 		const tbody = table.createEl('tbody');
 		filteredEntries.sort((a, b) => a.due - b.due);
@@ -1369,6 +1384,7 @@ export class DashboardModal extends Modal {
 				tdStatus.textContent = `⏳ ${timeStr}`;
 				tdStatus.setCssStyles({ color: 'var(--text-success)' });
 			}
+			statusSecond(row);
 		}
 	}
 
@@ -1562,6 +1578,9 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		} else {
 			this.settings = Object.assign({}, DEFAULT_SETTINGS);
 		}
+		if (reconcileRemote(this.app, this.settings)) {
+			await this.saveSettings();
+		}
 		this.unlockAll = await checkUnlockKey(this.settings.unlockKey);
 
 		let newStore: Record<string, CardSchedulingMetadata> = {};
@@ -1698,6 +1717,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	}
 
 	async saveSettings(): Promise<void> {
+		stampRemote(this.app, this.settings);
 		await this.saveData(this.settings);
 	}
 

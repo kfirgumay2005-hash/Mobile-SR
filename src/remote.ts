@@ -473,6 +473,88 @@ export function activeRemote(s: SpacedRepetitionSettings): RemotePreset {
 	return found as RemotePreset;
 }
 
+// ---- עותק מקומי של הפריסטים ----
+// LiveSync מסנכרן את data.json, ולכן גרסה ישנה ממכשיר אחר יכולה לדרוס את הקובץ, וכל
+// טעינה מהדיסק (גם באמצע review) הייתה מחזירה קישורים ישנים. לכן כל מכשיר שומר עותק
+// ב-localStorage (שלא מסתנכרן) עם חותמת זמן, והגרסה עם החותמת החדשה יותר מנצחת.
+const mirrorKey = (app: App): string =>
+	`mobilesr-remote:${app.vault.getName()}`;
+
+interface RemoteMirror {
+	at: number;
+	active: string;
+	presets: RemotePreset[];
+}
+
+function readMirror(app: App): RemoteMirror | null {
+	try {
+		const raw = window.localStorage.getItem(mirrorKey(app));
+		const m = raw ? (JSON.parse(raw) as RemoteMirror) : null;
+		return m && typeof m.at === 'number' && Array.isArray(m.presets)
+			? m
+			: null;
+	} catch {
+		return null;
+	}
+}
+
+function writeMirror(app: App, s: SpacedRepetitionSettings, at: number): void {
+	try {
+		const m: RemoteMirror = {
+			at,
+			active: s.remoteActivePreset ?? '',
+			presets: remotePresets(s),
+		};
+		window.localStorage.setItem(mirrorKey(app), JSON.stringify(m));
+	} catch {
+		// בלי localStorage פשוט אין הגנה מדריסה
+	}
+}
+
+function presetsKey(presets: RemotePreset[], active?: string): string {
+	return JSON.stringify([presets, active ?? '']);
+}
+
+// נקרא אחרי כל טעינה של data.json. אם העותק המקומי חדש מהקובץ, הקובץ נדרס בסנכרון:
+// מחזיר את הפריסטים המקומיים ומחזיר true (צריך לשמור, כדי שהתיקון יגיע גם למכשירים אחרים)
+export function reconcileRemote(
+	app: App,
+	s: SpacedRepetitionSettings,
+): boolean {
+	const onDisk = remotePresets(s);
+	const stamp = s.remoteStamp ?? 0;
+	const m = readMirror(app);
+	if (!m || m.at <= stamp || m.presets.length === 0) {
+		writeMirror(app, s, stamp);
+		return false;
+	}
+	const differs =
+		presetsKey(onDisk, s.remoteActivePreset) !==
+		presetsKey(m.presets, m.active);
+	s.remotePresets = m.presets;
+	s.remoteActivePreset = m.active;
+	s.remoteStamp = m.at;
+	if (differs) {
+		new Notice('Sync replaced your remote buttons. They were restored.');
+	}
+	return true;
+}
+
+// נקרא בכל שמירה: שינוי אמיתי בפריסטים מקבל חותמת חדשה
+export function stampRemote(app: App, s: SpacedRepetitionSettings): void {
+	const presets = remotePresets(s);
+	const m = readMirror(app);
+	if (
+		m &&
+		presetsKey(m.presets, m.active) ===
+			presetsKey(presets, s.remoteActivePreset)
+	) {
+		return;
+	}
+	s.remoteStamp = Math.max(Date.now(), (s.remoteStamp ?? 0) + 1);
+	writeMirror(app, s, s.remoteStamp);
+}
+
 // פריסט חדש: בלי קישורים (כל שלט שולח מחוות אחרות - מקשרים עם Listen) וספים רגילים
 export function addRemotePreset(
 	s: SpacedRepetitionSettings,
