@@ -82,6 +82,8 @@ export interface SpacedRepetitionSettings {
 	remoteAcceptManual: boolean;
 	// הקשה כפולה כקלט נפרד; כבוי = כל הקשה מיידית
 	remoteDoublePress: boolean;
+	// מתקן את כיוון הסוויפ של השלט כשהמסך מסובב, כדי שכל כפתור יישאר אותו דבר
+	remoteFixRotation: boolean;
 	// פריסט לכל שלט (קישורים וספים); רק אחד פעיל. ראו remotePresets ב-remote.ts
 	remotePresets?: RemotePreset[];
 	remoteActivePreset?: string;
@@ -128,6 +130,7 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	remoteToast: true,
 	remoteAcceptManual: false,
 	remoteDoublePress: true,
+	remoteFixRotation: true,
 	ttsEnabled: false,
 	ttsEngine: 'auto',
 	ttsReadAnswer: true,

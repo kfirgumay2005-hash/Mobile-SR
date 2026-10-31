@@ -121,7 +121,7 @@ export class RemoteLoggerModal extends Modal {
 				: Platform.isMobile
 					? 'mobile'
 					: 'desktop';
-		return `${os} viewport=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio}`;
+		return `${os} viewport=${window.innerWidth}x${window.innerHeight} dpr=${window.devicePixelRatio} angle=${screenAngle()}`;
 	}
 
 	private attach(): void {
@@ -645,6 +645,28 @@ function dirOf(dx: number, dy: number): string {
 	return dy < 0 ? 'SWIPE_UP' : 'SWIPE_DOWN';
 }
 
+// סיבוב המסך ביחס למצב הטבעי: 90 = המכשיר הוטה נגד כיוון השעון, 270 = עם כיוון השעון.
+// במקום שאין בו את ה-API מחזיר 0, כלומר בלי תיקון
+function screenAngle(): number {
+	const o = window.screen.orientation as ScreenOrientation | undefined;
+	return o ? ((o.angle % 360) + 360) % 360 : 0;
+}
+
+// השלט מדווח תנועה ביחס לפאנל הפיזי, אבל clientX/Y הם ביחס למסך המסובב, ולכן בסיבוב כל
+// כפתור "עובר" לכיוון אחר. כאן התנועה מוחזרת למצב הטבעי (שבו בדרך כלל נעשה Listen)
+function unrotate(dx: number, dy: number, angle: number): [number, number] {
+	switch (angle) {
+		case 90:
+			return [-dy, dx];
+		case 180:
+			return [-dx, -dy];
+		case 270:
+			return [dy, -dx];
+		default:
+			return [dx, dy];
+	}
+}
+
 function isEditable(t: EventTarget | null): boolean {
 	return (
 		t instanceof Element &&
@@ -749,6 +771,13 @@ export class RemoteInput {
 		this.seq = null;
 	}
 
+	// כיוון של סוויפ מהשלט בלבד: אצבע ועכבר נשארים ביחס למה שרואים על המסך
+	private remoteDir(dx: number, dy: number): string {
+		if (!this.opts.settings().remoteFixRotation) return dirOf(dx, dy);
+		const [x, y] = unrotate(dx, dy, screenAngle());
+		return dirOf(x, y);
+	}
+
 	private emit(g: string, info: GestureInfo): void {
 		const now = performance.now();
 		// רק אותה מחווה ברצף נבלעת; מחווה אחרת (למשל אחרי לחיצה ממתינה) עוברת
@@ -801,7 +830,9 @@ export class RemoteInput {
 		// חייבים לחסום כבר כאן, אחרת הדפדפן מתחיל לגלול וה-touchmove הבאים לא ניתנים לביטול
 		if (s.mode === 'unknown') {
 			s.mode = big >= st.remoteFirstStep ? 'remote' : 'finger';
-			if (s.mode === 'remote') s.block = this.opts.wants(dirOf(dx, dy));
+			if (s.mode === 'remote') {
+				s.block = this.opts.wants(this.remoteDir(dx, dy));
+			}
 		}
 		if (s.block) {
 			if (e.cancelable) e.preventDefault();
@@ -810,9 +841,9 @@ export class RemoteInput {
 		// מפעילים כבר באמצע התנועה - לפעמים ה-touchend של השלט לא מגיע
 		if (s.mode === 'remote' && !s.fired && big >= st.remoteSwipeDistance) {
 			s.fired = true;
-			this.single(dirOf(dx, dy), {
+			this.single(this.remoteDir(dx, dy), {
 				source: 'remote',
-				detail: `${r(dx)},${r(dy)} px in ${r(e.timeStamp - s.t)} ms`,
+				detail: `${r(dx)},${r(dy)} px in ${r(e.timeStamp - s.t)} ms, screen ${screenAngle()}°`,
 			});
 		}
 	}
@@ -834,7 +865,10 @@ export class RemoteInput {
 
 		if (s.mode === 'remote') {
 			if (!s.fired && big >= st.remoteSwipeDistance) {
-				this.single(dirOf(dx, dy), { source: 'remote', detail });
+				this.single(this.remoteDir(dx, dy), {
+					source: 'remote',
+					detail: `${detail}, screen ${screenAngle()}°`,
+				});
 			}
 			return;
 		}
@@ -1071,6 +1105,18 @@ export function renderRemoteSettings(
 		.addToggle((t) =>
 			t.setValue(plugin.settings.remoteDoublePress).onChange((v) => {
 				plugin.settings.remoteDoublePress = v;
+				save();
+			}),
+		);
+
+	new Setting(containerEl)
+		.setName('Keep buttons the same when the screen rotates')
+		.setDesc(
+			'A remote’s swipes turn with the screen, so a button can trigger a different action after you rotate the phone. On: every button does the same thing in any orientation, matching upright portrait. Bind buttons in that position, or in any position while this is on. Off: use the direction as it arrives.',
+		)
+		.addToggle((t) =>
+			t.setValue(plugin.settings.remoteFixRotation).onChange((v) => {
+				plugin.settings.remoteFixRotation = v;
 				save();
 			}),
 		);

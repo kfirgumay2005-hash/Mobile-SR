@@ -83,6 +83,7 @@ Works with remotes that send swipes and taps to the phone (the kind sold for scr
 - **Only the remote is caught.** Swipes from the remote are told apart from your finger, so normal scrolling still works. The remote is active only while a review is open.
 - **Double tap** on the center button is an extra input. Turn it off to make every tap instant.
 - **Skip and go back.** A skipped card comes back at the end of the session. Going back to a card you already rated lets you rate it again, and the new rating replaces the earlier one.
+- **Buttons stay the same when you rotate the phone.** A remote's swipes turn with the screen, so its buttons would change actions in landscape. The plugin corrects this; you can turn it off in the settings.
 - **Presets for several remotes.** Each remote keeps its own bindings and sensitivity; pick the active one in the settings.
 - **Test remote** shows every detected press and the action it is bound to, and sliders tune the sensitivity.
 - **Remote tutorial:** a short practice deck that walks through every action. Nothing in it is saved. Start it from the settings or with **Remote: start tutorial**.
@@ -166,7 +167,7 @@ To bring in a deck from somewhere else (for example Quizlet), paste it into an A
 
 ## Using the plugin
 
-Select the plugin's icon in the ribbon, or run **Open Spaced Repetition Dashboard**.
+Select the plugin's icon in the ribbon, or run **Mobile-SR: Open**.
 
 - **Decks:** each deck shows how many cards are due and has its own **Start** button for a session with that deck only.
 - **Reviewed flashcards status:** a searchable table of the cards you have studied, with the time left until the next review and the current interval.

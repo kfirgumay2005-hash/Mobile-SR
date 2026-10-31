@@ -1451,6 +1451,15 @@ export default class SpacedRepetitionPlugin extends Plugin {
 			},
 		);
 
+		// נראה בפלטה כ-"Mobile-SR: Open", בדיוק כמו הכפתור ב-ribbon
+		this.addCommand({
+			id: 'open',
+			name: 'Open',
+			callback: () => {
+				new DashboardModal(this.app, this).open();
+			},
+		});
+
 		this.addCommand({
 			id: 'open-srs-dashboard',
 			name: 'Open Spaced Repetition Dashboard',
