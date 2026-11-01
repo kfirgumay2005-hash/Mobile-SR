@@ -115,7 +115,8 @@ The only network use is the optional read aloud feature, and only when it uses o
 - **Syncs like a note.** Your progress is stored in a Markdown file inside the vault, so any sync that handles your notes also carries your review schedule between devices.
 - **Dashboard.** See every deck with its due cards, start a session for one deck, and search a table of everything you have reviewed with its next due time.
 - **Reversed cards.** One card can be studied in both directions.
-- **Hints.** Mark a deck as a hint deck and each card gets a **Show hint** button.
+- **Hints.** Mark a deck as a hint deck and each card gets a **Show hint** button. A setting turns it into small, faded text, so it is easier to resist.
+- **Type before reveal.** Turn this on and you must type an answer and submit it before the back of the card appears, with your answer shown next to it. It stops the "I knew that" feeling.
 - **Edit while reviewing.** Fix a typo in a card without leaving the session.
 - **Interval previews.** The rating buttons can show when the card will return (for example 10m, 3d, 2mo).
 - **Deck cleanup.** One command fixes spacing and removes duplicate cards from a note.

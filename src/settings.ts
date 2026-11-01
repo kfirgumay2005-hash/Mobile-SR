@@ -56,6 +56,10 @@ export interface SpacedRepetitionSettings {
 	hintTags: string[];
 	duplicateMode: DuplicateMode;
 	showIntervalOnButtons: boolean;
+	// חובה להקליד תשובה לפני שהגב נחשף (לא ב-Tutorial, וכבוי בסשן שבו משתמשים בשלט)
+	typeBeforeReveal: boolean;
+	// כפתור Show Hint קטן ודהוי, כדי שלא ילחצו עליו מתוך הרגל
+	hintButtonSubtle: boolean;
 	dataFolderPath: string;
 	// ---- Blast game (העדפות; נתוני המשחק נשמרים ב-blast-data.md) ----
 	blastSound: boolean;
@@ -116,6 +120,8 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	hintTags: ['#hint'],
 	duplicateMode: 'exact',
 	showIntervalOnButtons: true,
+	typeBeforeReveal: false,
+	hintButtonSubtle: false,
 	dataFolderPath: 'SRS-Data',
 	blastSound: true,
 	blastDataFolderPath: '',
@@ -358,6 +364,34 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 					.setValue(this.plugin.settings.showIntervalOnButtons)
 					.onChange(async (value) => {
 						this.plugin.settings.showIntervalOnButtons = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Type answer before reveal')
+			.setDesc(
+				'Replaces the show answer button with a text field: type your answer and submit it to see the back of the card, with your answer next to it. What you type is not saved and does not change the rating. Using a remote switches the rest of that review back to the regular button.',
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.typeBeforeReveal)
+					.onChange(async (value) => {
+						this.plugin.settings.typeBeforeReveal = value;
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Subtle hint button')
+			.setDesc(
+				'Shows the hint button as small, faded text instead of a full-width button.',
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.hintButtonSubtle)
+					.onChange(async (value) => {
+						this.plugin.settings.hintButtonSubtle = value;
 						await this.plugin.saveSettings();
 					}),
 			);

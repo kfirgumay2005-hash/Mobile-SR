@@ -29,6 +29,7 @@ import {
 	reconcileRemote,
 	remoteActionFor,
 	stampRemote,
+	type GestureInfo,
 	type RemoteAction,
 } from './remote';
 import { Speaker } from './speech';
@@ -393,6 +394,10 @@ export class ReviewModal extends Modal {
 	private isAnswerShown: boolean = false;
 	private isHintShown: boolean = false;
 	private isEditing: boolean = false;
+	// מה שהוקלד לכרטיס הנוכחי. נשמר כאן כדי לעבור ציור מחדש, ולא נשמר לשום קובץ
+	private typedAnswer: string = '';
+	// השלט בשימוש בסשן הזה: אי אפשר להקליד איתו, אז חוזרים לכפתור Show Answer
+	private remoteInUse: boolean = false;
 	private component: Component;
 	// שלט רחוק (ראו remote.ts); פעיל רק כל עוד החלון פתוח
 	private remote: RemoteInput | null = null;
@@ -404,7 +409,8 @@ export class ReviewModal extends Modal {
 	private announce: string = '';
 	// מדריך השלט: כרטיסים שנוצרו בזיכרון, ושום דירוג לא נשמר
 	private practice: boolean;
-	private isRating: boolean = false;
+	// ציור שהתחיל אחרי ציור אחר מבטל אותו, כדי שלחיצות מהירות לא יכפילו את התצוגה
+	private renderToken: number = 0;
 	// צעדים קדימה, כדי ש-"כרטיס קודם" יוכל לחזור אחורה
 	private history: ReviewStep[] = [];
 	// כרטיסים שדורגו בסשן הזה ומה היה המצב שלהם לפני הדירוג,
@@ -437,11 +443,17 @@ export class ReviewModal extends Modal {
 			this.remote = new RemoteInput({
 				settings: () => this.plugin.settings,
 				// במדריך גם הקשה לא מקושרת נתפסת, כדי להראות שהיא הגיעה
+				// הקשה באמצע הקלדה היא אצבע על המסך, ולא בקשה לרמז או להפוך את הכרטיס
 				wants: (g) =>
 					!this.isEditing &&
+					!(
+						(g === 'TAP' || g === 'DOUBLE_TAP') &&
+						this.mustType() &&
+						this.typedAnswer.trim() !== ''
+					) &&
 					(remoteActionFor(this.plugin.settings, g) !== null ||
 						(this.practice && (g === 'TAP' || g === 'DOUBLE_TAP'))),
-				onGesture: (g) => this.onRemoteGesture(g),
+				onGesture: (g, info) => this.onRemoteGesture(g, info),
 			});
 			this.remote.attach(this.plugin);
 		}
@@ -493,16 +505,38 @@ export class ReviewModal extends Modal {
 		this.contentEl.empty();
 	}
 
-	private onRemoteGesture(g: string): void {
+	// האם הכרטיס הנוכחי מחכה לתשובה מוקלדת במקום לכפתור Show Answer
+	private mustType(): boolean {
+		return (
+			this.plugin.settings.typeBeforeReveal &&
+			!this.practice &&
+			!this.remoteInUse &&
+			!this.isAnswerShown
+		);
+	}
+
+	private onRemoteGesture(g: string, info: GestureInfo): void {
 		const action = remoteActionFor(this.plugin.settings, g);
-		if (this.isEditing || this.isRating) return;
+		if (this.isEditing) return;
 		if (!action) {
 			if (this.practice) {
 				new Notice(`${gestureLabel(g)}: not bound`, 1500);
 			}
 			return;
 		}
+		const wasTyping = this.mustType();
+		// הקשה בודדת יכולה להיות גם אצבע על הכרטיס, ולכן היא לא מעידה על שלט
+		if (
+			info.source === 'remote' &&
+			(g.startsWith('SWIPE') || action === 'flip')
+		) {
+			this.remoteInUse = true;
+		}
 		const done = this.runRemoteAction(action);
+		// פעולה שנדחתה לא מציירת מחדש, והשדה צריך להיעלם גם אז
+		if (wasTyping && !done && !this.mustType()) {
+			void this.renderCurrentCard();
+		}
 		if (done && this.plugin.settings.ttsAnnounce && ANNOUNCED.has(action)) {
 			this.announce = done;
 		}
@@ -562,7 +596,7 @@ export class ReviewModal extends Modal {
 			rating.value,
 			this.plugin.settings,
 		);
-		void this.applyRating(card, nextMeta, rating.label);
+		this.applyRating(card, nextMeta, rating.label);
 		return rating.label;
 	}
 
@@ -582,6 +616,7 @@ export class ReviewModal extends Modal {
 		}
 		this.isAnswerShown = false;
 		this.isHintShown = false;
+		this.typedAnswer = '';
 		void this.renderCurrentCard();
 		return 'Skipped';
 	}
@@ -602,6 +637,7 @@ export class ReviewModal extends Modal {
 		}
 		this.isAnswerShown = this.ratedBefore.has(step.card);
 		this.isHintShown = false;
+		this.typedAnswer = '';
 		void this.renderCurrentCard();
 		return 'Previous card';
 	}
@@ -661,6 +697,7 @@ export class ReviewModal extends Modal {
 	private async renderCurrentCard(): Promise<void> {
 		const { contentEl } = this;
 		contentEl.empty();
+		const token = ++this.renderToken;
 		// אחרי שהפעולה הנוכחית מסתיימת, כדי שההודעה (announce) כבר תהיה מוכנה
 		if (this.speaker) window.setTimeout(() => this.speakCurrent(), 0);
 
@@ -757,6 +794,7 @@ export class ReviewModal extends Modal {
 			card.filePath,
 			this.component,
 		);
+		if (token !== this.renderToken) return;
 
 		if (hasHint && (this.isHintShown || this.isAnswerShown)) {
 			const hintWrap = bodyEl.createDiv({ cls: 'srs-hint-wrapper' });
@@ -779,10 +817,26 @@ export class ReviewModal extends Modal {
 				card.filePath,
 				this.component,
 			);
+			if (token !== this.renderToken) return;
 		}
 
 		if (this.isAnswerShown) {
 			bodyEl.createEl('hr');
+			if (this.typedAnswer.trim() !== '') {
+				const typedWrap = bodyEl.createDiv({ cls: 'srs-typed-answer' });
+				typedWrap.setCssStyles({ marginBottom: '0.75em' });
+				const typedLabel = typedWrap.createDiv({ text: 'Your answer' });
+				typedLabel.setCssStyles({
+					fontSize: '0.8em',
+					opacity: '0.7',
+					marginBottom: '0.25em',
+				});
+				const typedEl = typedWrap.createDiv({
+					text: this.typedAnswer.trim(),
+					attr: { dir: 'auto' },
+				});
+				typedEl.setCssStyles({ whiteSpace: 'pre-wrap' });
+			}
 			const backEl = bodyEl.createDiv({ cls: 'srs-back-content' });
 			await MarkdownRenderer.render(
 				this.app,
@@ -791,6 +845,7 @@ export class ReviewModal extends Modal {
 				card.filePath,
 				this.component,
 			);
+			if (token !== this.renderToken) return;
 		}
 
 		if (earlier) {
@@ -809,25 +864,46 @@ export class ReviewModal extends Modal {
 
 		if (!this.isAnswerShown) {
 			if (hasHint && !this.isHintShown) {
+				const subtle = this.plugin.settings.hintButtonSubtle;
 				const hintBtn = bottomBar.createEl('button', {
-					text: 'Show Hint',
+					text: subtle ? 'Hint' : 'Show Hint',
 				});
-				hintBtn.setCssStyles({ width: '100%', marginBottom: '8px' });
+				hintBtn.setCssStyles(
+					subtle
+						? {
+								display: 'block',
+								width: 'auto',
+								height: 'auto',
+								margin: '0 auto 8px',
+								padding: '2px 8px',
+								background: 'transparent',
+								border: 'none',
+								boxShadow: 'none',
+								color: 'var(--text-faint)',
+								fontSize: '0.75em',
+								opacity: '0.6',
+							}
+						: { width: '100%', marginBottom: '8px' },
+				);
 				hintBtn.onclick = () => {
 					this.isHintShown = true;
 					void this.renderCurrentCard();
 				};
 			}
 
-			const showBtn = bottomBar.createEl('button', {
-				text: 'Show Answer',
-				cls: 'mod-cta',
-			});
-			showBtn.setCssStyles({ width: '100%' });
-			showBtn.onclick = () => {
-				this.isAnswerShown = true;
-				void this.renderCurrentCard();
-			};
+			if (this.mustType()) {
+				this.renderAnswerField(bottomBar);
+			} else {
+				const showBtn = bottomBar.createEl('button', {
+					text: 'Show Answer',
+					cls: 'mod-cta',
+				});
+				showBtn.setCssStyles({ width: '100%' });
+				showBtn.onclick = () => {
+					this.isAnswerShown = true;
+					void this.renderCurrentCard();
+				};
+			}
 		} else {
 			const buttonGrid = bottomBar.createDiv({ cls: 'srs-button-grid' });
 			buttonGrid.setCssStyles({
@@ -878,17 +954,59 @@ export class ReviewModal extends Modal {
 				}
 
 				btn.onclick = () => {
-					void this.applyRating(card, nextMeta, item.label);
+					this.applyRating(card, nextMeta, item.label);
 				};
 			}
 		}
 	}
 
-	private async applyRating(
+	// שדה התשובה: הגב נחשף רק אחרי שליחה של טקסט לא ריק
+	private renderAnswerField(parent: HTMLElement): void {
+		const field = parent.createEl('textarea', {
+			attr: { dir: 'auto', rows: '2', placeholder: 'Type your answer' },
+		});
+		field.value = this.typedAnswer;
+		field.setCssStyles({
+			display: 'block',
+			width: '100%',
+			marginBottom: '8px',
+			resize: 'vertical',
+		});
+
+		const submitBtn = parent.createEl('button', {
+			text: 'Submit',
+			cls: 'mod-cta',
+		});
+		submitBtn.setCssStyles({ width: '100%' });
+
+		const isBlank = (): boolean => this.typedAnswer.trim() === '';
+		const submit = (): void => {
+			if (isBlank()) return;
+			this.isAnswerShown = true;
+			void this.renderCurrentCard();
+		};
+		submitBtn.disabled = isBlank();
+		submitBtn.onclick = submit;
+		field.oninput = () => {
+			this.typedAnswer = field.value;
+			submitBtn.disabled = isBlank();
+		};
+		// Enter שולח ו-Shift+Enter יורד שורה; בזמן הרכבת אותיות Enter שייך למקלדת
+		field.onkeydown = (e) => {
+			if (e.key !== 'Enter' || e.shiftKey || e.isComposing) return;
+			e.preventDefault();
+			submit();
+		};
+		field.focus();
+		field.setSelectionRange(field.value.length, field.value.length);
+	}
+
+	// הכרטיס הבא מוצג מיד, והכתיבה לקובץ רצה ברקע (היא עלולה לקחת זמן בטלפון)
+	private applyRating(
 		card: Flashcard,
 		nextMeta: CardSchedulingMetadata,
 		label: string,
-	): Promise<void> {
+	): void {
 		const prev = this.metaBeforeRating(card);
 		const reviewedAt = Date.now();
 
@@ -908,16 +1026,14 @@ export class ReviewModal extends Modal {
 		// במדריך לא שומרים כלום - לא ללוח הזמנים ולא לספירת הפתיחות
 		if (!this.practice) {
 			this.plugin.store[card.id] = nextMeta;
-			this.isRating = true;
-			try {
-				await this.plugin.saveCardStore();
-			} finally {
-				this.isRating = false;
-			}
+			void this.plugin.saveCardStore().catch(() => {
+				new Notice('Could not save your rating to the data file.');
+			});
 		}
 		this.currentIndex++;
 		this.isAnswerShown = false;
 		this.isHintShown = false;
+		this.typedAnswer = '';
 		void this.renderCurrentCard();
 	}
 
@@ -1417,6 +1533,9 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	settings!: SpacedRepetitionSettings;
 	store: Record<string, CardSchedulingMetadata> = {};
 	isSaving: boolean = false; // דגל למניעת לולאת רענון בעת שמירה
+	private savingTimer: number | undefined;
+	private storeWrite: Promise<void> | null = null;
+	private storeDirty: boolean = false;
 	blastData: BlastData = defaultBlastData();
 	isSavingBlast: boolean = false;
 	unlockAll: boolean = false; // המפתח הסודי ב-data.json תקין
@@ -1879,46 +1998,66 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		new Notice(`Blast data saved to: ${this.getBlastDataFilePath()}`);
 	}
 
-	async saveCardStore(): Promise<void> {
+	// כתיבה אחת בכל רגע: שמירה שמגיעה באמצע כתיבה מסמנת שצריך לכתוב שוב בסיומה.
+	// isSaving נשאר דלוק לכל האורך, כדי שטעינה מהדיסק לא תדרוס דירוג שעוד לא נכתב
+	saveCardStore(): Promise<void> {
 		this.isSaving = true;
+		window.clearTimeout(this.savingTimer);
+		if (this.storeWrite) {
+			this.storeDirty = true;
+			return this.storeWrite;
+		}
+		this.storeWrite = this.runStoreWrites();
+		return this.storeWrite;
+	}
+
+	private async runStoreWrites(): Promise<void> {
 		try {
-			const filePath = this.getDataFilePath();
-			const folderPath = this.settings.dataFolderPath
-				? this.settings.dataFolderPath.trim().replace(/^\/+|\/+$/g, '')
-				: '';
-
-			if (folderPath) {
-				await this.ensureFolderExists(folderPath);
-			}
-
-			const dataObj = {
-				store: this.store,
-			};
-
-			const jsonString = JSON.stringify(dataObj, null, 2);
-			const markdownContent = `---\ntags: [srs-system-data]\n---\n# Spaced Repetition Data\n\n> ⚠️ **Warning:** Do not edit this file manually unless you know what you are doing. The plugin reads and writes directly from the code block below.\n\n\`\`\`json\n${jsonString}\n\`\`\`\n`;
-
-			const file = this.app.vault.getAbstractFileByPath(filePath);
-
-			if (file instanceof TFile) {
-				await this.app.vault.modify(file, markdownContent);
-			} else {
-				const oldFile = this.getVaultDataFile();
-				if (oldFile && oldFile.path !== filePath) {
-					try {
-						await this.app.fileManager.trashFile(oldFile);
-					} catch {
-						// Ignored: File could not be trashed
-					}
-				}
-
-				await this.app.vault.create(filePath, markdownContent);
-			}
+			do {
+				this.storeDirty = false;
+				await this.writeCardStore();
+			} while (this.storeDirty);
 		} finally {
+			this.storeWrite = null;
 			// שחרור הדגל לאחר זמן קצר כדי לאפשר לאירועי ה-modify להסתיים
-			window.setTimeout(() => {
+			this.savingTimer = window.setTimeout(() => {
 				this.isSaving = false;
 			}, 1000);
+		}
+	}
+
+	private async writeCardStore(): Promise<void> {
+		const filePath = this.getDataFilePath();
+		const folderPath = this.settings.dataFolderPath
+			? this.settings.dataFolderPath.trim().replace(/^\/+|\/+$/g, '')
+			: '';
+
+		if (folderPath) {
+			await this.ensureFolderExists(folderPath);
+		}
+
+		const dataObj = {
+			store: this.store,
+		};
+
+		const jsonString = JSON.stringify(dataObj, null, 2);
+		const markdownContent = `---\ntags: [srs-system-data]\n---\n# Spaced Repetition Data\n\n> ⚠️ **Warning:** Do not edit this file manually unless you know what you are doing. The plugin reads and writes directly from the code block below.\n\n\`\`\`json\n${jsonString}\n\`\`\`\n`;
+
+		const file = this.app.vault.getAbstractFileByPath(filePath);
+
+		if (file instanceof TFile) {
+			await this.app.vault.modify(file, markdownContent);
+		} else {
+			const oldFile = this.getVaultDataFile();
+			if (oldFile && oldFile.path !== filePath) {
+				try {
+					await this.app.fileManager.trashFile(oldFile);
+				} catch {
+					// Ignored: File could not be trashed
+				}
+			}
+
+			await this.app.vault.create(filePath, markdownContent);
 		}
 	}
 
