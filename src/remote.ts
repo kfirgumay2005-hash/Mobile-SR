@@ -576,12 +576,6 @@ export function addRemotePreset(
 
 // תנועה קטנה מזה לא נחשבת תזוזה (הקשה)
 const TAP_SLOP = 6;
-// החלקת אצבע / עכבר אמיתית (רק כשהאפשרות פעילה)
-const MANUAL_SWIPE = 80;
-const MANUAL_MAX_MS = 700;
-// גלגלת: סכום התזוזה שמפעיל מחווה, והפסקה שמסיימת מחווה
-const WHEEL_THRESHOLD = 60;
-const WHEEL_GAP_MS = 250;
 // כמה זמן מחכים ללחיצה ב-Listen
 const LISTEN_TIMEOUT_MS = 10000;
 
@@ -592,7 +586,28 @@ const LABELS: Record<string, string> = {
 	SWIPE_RIGHT: 'Swipe right',
 	TAP: 'Tap',
 	DOUBLE_TAP: 'Double tap',
+	TAP_TOP: 'Tap top',
+	TAP_BOTTOM: 'Tap bottom',
+	TAP_LEFT: 'Tap left',
+	TAP_RIGHT: 'Tap right',
+	DOUBLE_TAP_TOP: 'Double tap top',
+	DOUBLE_TAP_BOTTOM: 'Double tap bottom',
+	DOUBLE_TAP_LEFT: 'Double tap left',
+	DOUBLE_TAP_RIGHT: 'Double tap right',
 };
+
+// הקשה שהמרחק שלה ממרכז המסך (ביחס לחצי הרוחב / הגובה) קטן מזה היא הקשה במרכז (TAP)
+const TAP_CENTER_ZONE = 0.3;
+
+// כל סוגי ההקשה: במרכז ובצדדים, בודדת וכפולה
+export function isTapGesture(g: string): boolean {
+	return g.startsWith('TAP') || g.startsWith('DOUBLE_TAP');
+}
+
+// הגרסה הכפולה של הקשה: TAP -> DOUBLE_TAP, TAP_BOTTOM -> DOUBLE_TAP_BOTTOM
+function doubleOf(g: string): string {
+	return `DOUBLE_${g}`;
+}
 
 export function gestureLabel(g: string): string {
 	if (g.startsWith('KEY:')) return `Key ${g.slice(4)}`;
@@ -667,6 +682,24 @@ function unrotate(dx: number, dy: number, angle: number): [number, number] {
 	}
 }
 
+// איפה נפלה הקשה: TAP במרכז, או TAP_TOP / TAP_BOTTOM / TAP_LEFT / TAP_RIGHT.
+// יש שלטים עם שני כפתורים שכל אחד מקיש בנקודה אחרת (למשל מרכז ותחתית המסך).
+// המיקום נמדד במצב הטבעי של המסך, כמו כיוון ההחלקה של השלט
+function tapZone(x: number, y: number, fixRotation: boolean): string {
+	const w = window.innerWidth;
+	const h = window.innerHeight;
+	if (w <= 0 || h <= 0) return 'TAP';
+	const angle = fixRotation ? screenAngle() : 0;
+	const [ox, oy] = unrotate(x - w / 2, y - h / 2, angle);
+	// בסיבוב של 90 / 270 הרוחב והגובה הטבעיים מתחלפים
+	const turned = angle === 90 || angle === 270;
+	const nx = ox / ((turned ? h : w) / 2);
+	const ny = oy / ((turned ? w : h) / 2);
+	if (Math.max(Math.abs(nx), Math.abs(ny)) < TAP_CENTER_ZONE) return 'TAP';
+	if (Math.abs(nx) >= Math.abs(ny)) return nx < 0 ? 'TAP_LEFT' : 'TAP_RIGHT';
+	return ny < 0 ? 'TAP_TOP' : 'TAP_BOTTOM';
+}
+
 function isEditable(t: EventTarget | null): boolean {
 	return (
 		t instanceof Element &&
@@ -685,7 +718,7 @@ function isInteractive(t: EventTarget | null): boolean {
 }
 
 export interface GestureInfo {
-	source: 'remote' | 'finger' | 'mouse' | 'wheel' | 'key';
+	source: 'remote' | 'key';
 	detail: string;
 }
 
@@ -712,17 +745,11 @@ interface TouchSeq {
 	target: EventTarget | null;
 }
 
-// הופך אירועי מגע / עכבר / גלגלת / מקלדת גולמיים למחוות: SWIPE_*, TAP, DOUBLE_TAP, KEY:<code>
+// הופך אירועי מגע / עכבר / גלגלת / מקלדת גולמיים למחוות: SWIPE_*, TAP, DOUBLE_TAP, TAP_*, DOUBLE_TAP_*, KEY:<code>
 export class RemoteInput {
 	private opts: RemoteInputOptions;
 	private ctrl: AbortController | null = null;
 	private seq: TouchSeq | null = null;
-	private pointer: { id: number; x: number; y: number; t: number } | null =
-		null;
-	private wheelX = 0;
-	private wheelY = 0;
-	private wheelLast = 0;
-	private wheelFired = false;
 	private lastEmit = 0;
 	private lastGesture = '';
 	// לחיצה בודדת שמחכה לראות אם מגיעה לחיצה שנייה (רק כשהגרסה הכפולה מקושרת)
@@ -755,9 +782,6 @@ export class RemoteInput {
 		on('touchmove', (e) => this.onTouchMove(e));
 		on('touchend', (e) => this.onTouchEnd(e));
 		on('touchcancel', (e) => this.onTouchEnd(e));
-		on('pointerdown', (e) => this.onPointerDown(e));
-		on('pointerup', (e) => this.onPointerUp(e));
-		on('wheel', (e) => this.onWheel(e));
 		on('keydown', (e) => this.onKey(e));
 		on('click', (e) => this.onClick(e));
 		on('dblclick', (e) => this.onClick(e));
@@ -854,7 +878,6 @@ export class RemoteInput {
 		if (e.touches.length === 0) this.seq = null;
 		if (s.mode === 'ignore') return;
 		const st = activeRemote(this.opts.settings());
-		const manual = this.opts.settings().remoteAcceptManual;
 		const p = e.changedTouches[0];
 		const dx = (p ? p.clientX : s.lastX) - s.x;
 		const dy = (p ? p.clientY : s.lastY) - s.y;
@@ -872,19 +895,8 @@ export class RemoteInput {
 			}
 			return;
 		}
-		if (s.mode === 'finger') {
-			const small = Math.min(Math.abs(dx), Math.abs(dy));
-			if (
-				manual &&
-				e.type === 'touchend' &&
-				big >= MANUAL_SWIPE &&
-				dur <= MANUAL_MAX_MS &&
-				big >= small * 2
-			) {
-				this.single(dirOf(dx, dy), { source: 'finger', detail });
-			}
-			return;
-		}
+		// תנועת אצבע רגילה (גלילה) - לא מחווה
+		if (s.mode === 'finger') return;
 		// בלי שום touchmove: הקשה קצרה כמו של הכפתור האמצעי בשלט
 		if (
 			e.type === 'touchend' &&
@@ -893,46 +905,53 @@ export class RemoteInput {
 			dur <= st.remoteTapMaxMs &&
 			!(this.opts.tapIgnore ?? isInteractive)(s.target)
 		) {
-			this.onTap(e, `${r(dur)} ms`);
+			this.onTap(e, `${r(dur)} ms`, s.x, s.y);
 		}
 	}
 
-	private onTap(e: TouchEvent, detail: string): void {
-		const wantsTap = this.opts.wants('TAP');
-		const wantsDouble =
-			this.opts.settings().remoteDoublePress &&
-			this.opts.wants('DOUBLE_TAP');
-		if (!wantsTap && !wantsDouble) return;
+	private onTap(e: TouchEvent, detail: string, x: number, y: number): void {
+		const zone = tapZone(x, y, this.opts.settings().remoteFixRotation);
+		const info: GestureInfo = {
+			source: 'remote',
+			detail: `${detail} at ${r(x)},${r(y)}`,
+		};
+		const doubles = this.opts.settings().remoteDoublePress;
+		const bound = (g: string): boolean =>
+			this.opts.wants(g) || (doubles && this.opts.wants(doubleOf(g)));
+		// הקשה מחוץ למרכז שאין לה קישור (לא בודדת ולא כפולה) נחשבת הקשה רגילה,
+		// כדי ששלט עם כפתור אחד יעבוד בכל מקום שהוא מקיש
+		const g = zone !== 'TAP' && bound(zone) ? zone : 'TAP';
+		if (!bound(g)) return;
 		// מבטלים את ה-click שהדפדפן היה יוצר מההקשה
 		if (e.cancelable) e.preventDefault();
 		e.stopPropagation();
 		this.suppressClickUntil = performance.now() + 600;
-		this.tap({ source: 'remote', detail });
+		this.tap(g, info);
 	}
 
-	// הקשה בודדת או כפולה. אם Double tap מקושר והאפשרות פעילה, הקשה בודדת מחכה חלון
-	// קצר; אחרת היא מופעלת מיד. (ב-S18 לחיצה כפולה על חץ לא נשלחת, לכן רק הקשה)
-	private tap(info: GestureInfo): void {
+	// הקשה בודדת או כפולה (לכל אזור בנפרד). אם הגרסה הכפולה מקושרת והאפשרות פעילה,
+	// הקשה בודדת מחכה חלון קצר; אחרת היא מופעלת מיד. (ב-S18 לחיצה כפולה על חץ לא נשלחת)
+	private tap(g: string, info: GestureInfo): void {
 		const p = this.pending;
-		if (p && p.g === 'TAP') {
+		if (p && p.g === g) {
 			window.clearTimeout(p.timer);
 			this.pending = null;
-			this.emit('DOUBLE_TAP', info);
+			this.emit(doubleOf(g), info);
 			return;
 		}
 		this.flushPending();
 		if (
 			!this.opts.settings().remoteDoublePress ||
-			!this.opts.wants('DOUBLE_TAP')
+			!this.opts.wants(doubleOf(g))
 		) {
-			this.emit('TAP', info);
+			this.emit(g, info);
 			return;
 		}
 		const timer = window.setTimeout(() => {
 			this.pending = null;
-			this.emit('TAP', info);
+			this.emit(g, info);
 		}, activeRemote(this.opts.settings()).remoteDoubleTapMs);
-		this.pending = { g: 'TAP', info, timer };
+		this.pending = { g, info, timer };
 	}
 
 	// לחיצה אחרת הגיעה: הלחיצה הממתינה מופעלת מיד כבודדת
@@ -944,7 +963,7 @@ export class RemoteInput {
 		this.emit(p.g, p.info);
 	}
 
-	// קלט שאין לו גרסה כפולה (החלקה, מקש, גלגלת, עכבר)
+	// קלט שאין לו גרסה כפולה (החלקה, מקש)
 	private single(g: string, info: GestureInfo): void {
 		this.flushPending();
 		this.emit(g, info);
@@ -954,68 +973,6 @@ export class RemoteInput {
 		if (performance.now() < this.suppressClickUntil) {
 			e.preventDefault();
 			e.stopPropagation();
-		}
-	}
-
-	// עכבר / עט (מגע מטופל ב-touch*)
-	private onPointerDown(e: PointerEvent): void {
-		if (e.pointerType === 'touch') return;
-		this.pointer = {
-			id: e.pointerId,
-			x: e.clientX,
-			y: e.clientY,
-			t: e.timeStamp,
-		};
-	}
-
-	private onPointerUp(e: PointerEvent): void {
-		const p = this.pointer;
-		if (e.pointerType === 'touch' || !p || p.id !== e.pointerId) return;
-		this.pointer = null;
-		if (!this.opts.settings().remoteAcceptManual) return;
-		const dx = e.clientX - p.x;
-		const dy = e.clientY - p.y;
-		const big = Math.max(Math.abs(dx), Math.abs(dy));
-		const small = Math.min(Math.abs(dx), Math.abs(dy));
-		const dur = e.timeStamp - p.t;
-		if (big < MANUAL_SWIPE || dur > MANUAL_MAX_MS || big < small * 2)
-			return;
-		const g = dirOf(dx, dy);
-		if (!this.opts.wants(g)) return;
-		this.single(g, {
-			source: 'mouse',
-			detail: `${r(dx)},${r(dy)} px in ${r(dur)} ms`,
-		});
-	}
-
-	private onWheel(e: WheelEvent): void {
-		if (!this.opts.settings().remoteAcceptManual) return;
-		const k =
-			e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? window.innerHeight : 1;
-		const now = performance.now();
-		if (now - this.wheelLast > WHEEL_GAP_MS) {
-			this.wheelX = 0;
-			this.wheelY = 0;
-			this.wheelFired = false;
-		}
-		this.wheelLast = now;
-		// גלילה למטה (deltaY>0) היא כמו החלקת אצבע למעלה
-		const g = dirOf(-e.deltaX, -e.deltaY);
-		if (!this.opts.wants(g)) return;
-		e.preventDefault();
-		e.stopPropagation();
-		if (this.wheelFired) return;
-		this.wheelX += e.deltaX * k;
-		this.wheelY += e.deltaY * k;
-		if (
-			Math.max(Math.abs(this.wheelX), Math.abs(this.wheelY)) >=
-			WHEEL_THRESHOLD
-		) {
-			this.wheelFired = true;
-			this.single(dirOf(-this.wheelX, -this.wheelY), {
-				source: 'wheel',
-				detail: `${r(this.wheelX)},${r(this.wheelY)}`,
-			});
 		}
 	}
 
@@ -1117,18 +1074,6 @@ export function renderRemoteSettings(
 		.addToggle((t) =>
 			t.setValue(plugin.settings.remoteFixRotation).onChange((v) => {
 				plugin.settings.remoteFixRotation = v;
-				save();
-			}),
-		);
-
-	new Setting(containerEl)
-		.setName('Also accept finger, mouse and wheel swipes')
-		.setDesc(
-			'Off: only the remote is used, and finger scrolling works as usual. On: fast finger swipes, mouse drags and the scroll wheel also trigger the bound actions.',
-		)
-		.addToggle((t) =>
-			t.setValue(plugin.settings.remoteAcceptManual).onChange((v) => {
-				plugin.settings.remoteAcceptManual = v;
 				save();
 			}),
 		);
@@ -1435,7 +1380,7 @@ export function buildRemoteTutorialCards(
 			`Rate this card with ${press('easy')} (**Easy**).`,
 		],
 		[
-			`Some remotes have a center button that sends a **Tap** in the middle of the screen, and a double press sends a **Double tap**. Press it now: a notice shows whether it is bound. ${press('repeat')} reads the card aloud again when read aloud is on.\n\nThen flip with ${press('flip')}.`,
+			`Some remotes have a center button that sends a **Tap** in the middle of the screen, and a double press sends a **Double tap**. A button that taps elsewhere (for example near the bottom) sends **Tap bottom** and can be bound on its own, as can its double press (**Double tap bottom**). Press it now: a notice shows whether it is bound. ${press('repeat')} reads the card aloud again when read aloud is on.\n\nThen flip with ${press('flip')}.`,
 			`Finish by rating this card, or close the tutorial with ${press('exit')}. The card you skipped comes next.`,
 		],
 	];

@@ -26,6 +26,7 @@ import {
 	RemoteLoggerModal,
 	buildRemoteTutorialCards,
 	gestureLabel,
+	isTapGesture,
 	reconcileRemote,
 	remoteActionFor,
 	stampRemote,
@@ -447,12 +448,12 @@ export class ReviewModal extends Modal {
 				wants: (g) =>
 					!this.isEditing &&
 					!(
-						(g === 'TAP' || g === 'DOUBLE_TAP') &&
+						isTapGesture(g) &&
 						this.mustType() &&
 						this.typedAnswer.trim() !== ''
 					) &&
 					(remoteActionFor(this.plugin.settings, g) !== null ||
-						(this.practice && (g === 'TAP' || g === 'DOUBLE_TAP'))),
+						(this.practice && isTapGesture(g))),
 				onGesture: (g, info) => this.onRemoteGesture(g, info),
 			});
 			this.remote.attach(this.plugin);

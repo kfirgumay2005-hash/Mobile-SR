@@ -83,7 +83,6 @@ export interface SpacedRepetitionSettings {
 	// ---- שלט רחוק ב-review (ראו remote.ts) ----
 	remoteEnabled: boolean;
 	remoteToast: boolean;
-	remoteAcceptManual: boolean;
 	// הקשה כפולה כקלט נפרד; כבוי = כל הקשה מיידית
 	remoteDoublePress: boolean;
 	// מתקן את כיוון הסוויפ של השלט כשהמסך מסובב, כדי שכל כפתור יישאר אותו דבר
@@ -134,7 +133,6 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	musicVolume: 0.5,
 	remoteEnabled: true,
 	remoteToast: true,
-	remoteAcceptManual: false,
 	remoteDoublePress: true,
 	remoteFixRotation: true,
 	ttsEnabled: false,
