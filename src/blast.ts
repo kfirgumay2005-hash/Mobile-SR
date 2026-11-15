@@ -928,7 +928,10 @@ export class BlastModal extends Modal {
 		this.menuEl.createEl('p', { text: 'Loading your cards…' });
 
 		await this.plugin.loadBlastData();
-		const all = await this.plugin.scanAllCards();
+		// כרטיסי משפטים ארוכים לא מתאימים למשחק
+		const all = (await this.plugin.scanAllCards()).filter(
+			(c) => !c.sentence,
+		);
 		if (this.closed) return;
 
 		const now = Date.now();

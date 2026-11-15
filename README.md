@@ -115,6 +115,7 @@ The only network use is the optional read aloud feature, and only when it uses o
 - **Syncs like a note.** Your progress is stored in a Markdown file inside the vault, so any sync that handles your notes also carries your review schedule between devices.
 - **Dashboard.** See every deck with its due cards, start a session for one deck, and search a table of everything you have reviewed with its next due time.
 - **Reversed cards.** One card can be studied in both directions.
+- **Sentence cards.** Learn definitions and quotes word for word: words disappear in stages until only your bolded anchor words remain.
 - **Hints.** Mark a deck as a hint deck and each card gets a **Show hint** button. A setting turns it into small, faded text, so it is easier to resist.
 - **Type before reveal.** Turn this on and you must type an answer and submit it before the back of the card appears, with your answer shown next to it. It stops the "I knew that" feeling.
 - **Edit while reviewing.** Fix a typo in a card without leaving the session.
@@ -162,6 +163,31 @@ A deck is a note that contains the `#flashcards` tag. The note's name is the dec
 - **Reversed cards:** use `??` instead of `?` to study the card in both directions.
 - **Hints:** add the `#hint` tag to the note as well. The first line of each card is then the question, and any lines between it and the `?` are hidden behind a **Show hint** button.
 
+### Sentence cards
+
+For text you must know word for word, such as definitions and quotes, add the `#sentences` tag to the note as well. The card format stays the same: a short title, the `?` line, then the full sentence, which may run over several lines. Wrap the key words of each part in `**bold**` or `==highlight==`: these anchor words are the skeleton of the sentence and are never hidden.
+
+```markdown
+#flashcards #sentences
+
+-
+
+Balfour Declaration
+?
+The British government **views with favour** the establishment in Palestine of a **national home** for the Jewish people, and will use its **best endeavours** to facilitate this.
+-
+```
+
+- **Gradual deletion.** The sentence is shown in stages: the full sentence, then about a third of the other words hidden, then about two thirds, then only the anchor words. Hidden words become blanks about as long as the word; punctuation and line breaks stay.
+- **New cards** walk through all four stages in one sitting: recite the sentence, then flip to hide more words. After the last stage, flipping shows the full sentence and the rating buttons.
+- **Later reviews** open at the anchor-words stage. **Show more words** brings back one stage at a time, like a hint. Each card still gets one rating, scheduled by FSRS as usual.
+- **Fill in the blanks.** Every hidden word is a small field. Type the missing words and select **Check** (Enter moves to the next field and checks after the last one): right words turn green, wrong ones red. Fields you leave empty are fine, for when you would rather say the words aloud. Turn the fields off with **Type into sentence blanks**.
+- **Check yourself.** The answer side highlights the words that were hidden and lists each blank you typed wrong next to the right word; those words start out marked as missed. With the fields off and **Type answer before reveal** on, what you typed is compared word by word, ignoring punctuation, case, spacing and vowel marks: missing words show in red and wrong or extra words in orange. Otherwise tap the words you missed.
+- **Make anchor.** Every missed word gets a one-tap button that makes it bold in the note itself, so it stays visible from then on.
+- With a remote, the flip button moves through the stages, and **Show more words** can be bound to a button of its own. Read aloud reads the title, then the full sentence on the answer side.
+- **Sentences or flashcards.** A sentence deck on the dashboard has two small buttons, **Sentences** and **Flashcards**. Pick **Flashcards** to study it as ordinary cards (question, then the whole answer) for a while. The choice is kept for each deck until you change it, and both ways share the same schedule.
+- Sentence decks are left out of Blast, Match and Hangman, but their reviews count toward unlocks. `??` works like `?` in these decks.
+
 ### Importing a deck
 
 To bring in a deck from somewhere else (for example Quizlet), paste it into an AI assistant and ask it to put a `?` line between each term and its meaning, add the hyphen lines, and return plain text. Paste the result into a note and run **Fix Cards Spacing and Remove Duplicates** to tidy it up.
@@ -169,6 +195,18 @@ To bring in a deck from somewhere else (for example Quizlet), paste it into an A
 ## Using the plugin
 
 Select the plugin's icon in the ribbon, or run **Mobile-SR: Open**.
+
+### 📘 Tutorials
+
+New to the plugin? Open **Tutorials** from the dashboard, from the settings, or with the command **Open tutorials**. Each tutorial is a short practice review that you work through yourself, and nothing in it is saved: your schedule, notes and unlocks stay as they are.
+
+- **Reviewing cards:** flip, rate, fix a card while reviewing, and the dashboard.
+- **Hints**, **Reversed cards**, **Type before reveal** and **Sentence cards:** each feature on cards you can try out.
+- **Read aloud:** turn reading on and learn its settings.
+- **Remote control:** every remote action, using your current bindings.
+- **Write your own cards:** type or paste cards and see at once how the plugin reads them. Fix their spacing, remove duplicates, copy the text into a note, or try the cards in a practice review.
+
+A tutorial is marked **✓ Completed** once you rate its last card, and the menu shows how many you have finished. **Reset progress** clears the marks.
 
 - **Decks:** each deck shows how many cards are due and has its own **Start** button for a session with that deck only.
 - **Reviewed flashcards status:** a searchable table of the cards you have studied, with the time left until the next review and the current interval.
@@ -181,6 +219,8 @@ Select the plugin's icon in the ribbon, or run **Mobile-SR: Open**.
 | Target request retention             | How likely you want to be to remember a card when it comes up. Higher means more frequent reviews.                                |
 | Maximum interval                     | The longest gap, in days, allowed between two reviews of a card.                                                                  |
 | Flashcard deck tags / Hint deck tags | The tags that mark a note as a deck or as a hint deck.                                                                            |
+| Sentence deck tags                   | The tags that mark a deck as a sentence deck (default `#sentences`), studied word for word in stages.                             |
+| Type into sentence blanks            | In sentence cards, type the hidden words into fields and check them (on by default).                                              |
 | Show interval previews               | Show the next review time on the rating buttons.                                                                                  |
 | Duplicate detection mode             | Whether the cleanup command treats cards as duplicates when they are identical or when they share a first line.                   |
 | Data folder path                     | The vault folder where your review progress is saved.                                                                             |

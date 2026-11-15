@@ -347,11 +347,13 @@ export type RemoteAction =
 	| 'easy'
 	| 'exit'
 	| 'hint'
+	| 'more'
 	| 'repeat';
 
 export const REMOTE_ACTIONS: { id: RemoteAction; label: string }[] = [
 	{ id: 'flip', label: 'Flip / show answer' },
 	{ id: 'hint', label: 'Show hint' },
+	{ id: 'more', label: 'Show more words (sentence cards)' },
 	{ id: 'next', label: 'Next card (skip)' },
 	{ id: 'prev', label: 'Previous card' },
 	{ id: 'again', label: 'Rate again' },
@@ -368,6 +370,7 @@ export const REMOTE_ACTIONS: { id: RemoteAction; label: string }[] = [
 export const DEFAULT_REMOTE_BINDINGS: Record<RemoteAction, string[]> = {
 	flip: ['SWIPE_UP'],
 	hint: ['DOUBLE_TAP'],
+	more: [],
 	next: ['SWIPE_DOWN'],
 	prev: [],
 	again: ['SWIPE_RIGHT'],
@@ -1390,6 +1393,7 @@ export function buildRemoteTutorialCards(
 		filePath: '',
 		deckName: REMOTE_TUTORIAL_DECK,
 		type: 'MultiLine',
+		sentence: false,
 		front,
 		back,
 		// בכרטיס עם רמז, השורה הראשונה היא מה שמוצג כשאלה

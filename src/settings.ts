@@ -54,12 +54,20 @@ export interface SpacedRepetitionSettings {
 	fsrsWeights: number[];
 	flashcardTags: string[];
 	hintTags: string[];
+	// תג שהופך דק לדק משפטים (ראו sentence.ts), בנוסף לתג של כרטיסים
+	sentenceTags: string[];
 	duplicateMode: DuplicateMode;
 	showIntervalOnButtons: boolean;
 	// חובה להקליד תשובה לפני שהגב נחשף (לא ב-Tutorial, וכבוי בסשן שבו משתמשים בשלט)
 	typeBeforeReveal: boolean;
 	// כפתור Show Hint קטן ודהוי, כדי שלא ילחצו עליו מתוך הרגל
 	hintButtonSubtle: boolean;
+	// בכרטיסי משפט: שדה הקלדה בכל מקום ריק, עם כפתור Check
+	sentenceFillBlanks: boolean;
+	// מזהי המדריכים שהמשתמש סיים עד הסוף (ראו tutorials.ts). לא קשור ללוח הזמנים
+	tutorialsDone: string[];
+	// דקי משפטים (לפי שם) שנלמדים ככרטיסים רגילים; נבחר בדשבורד ליד Start
+	flashcardDecks: string[];
 	dataFolderPath: string;
 	// ---- Blast game (העדפות; נתוני המשחק נשמרים ב-blast-data.md) ----
 	blastSound: boolean;
@@ -117,10 +125,14 @@ export const DEFAULT_SETTINGS: SpacedRepetitionSettings = {
 	],
 	flashcardTags: ['#flashcards'],
 	hintTags: ['#hint'],
+	sentenceTags: ['#sentences'],
 	duplicateMode: 'exact',
 	showIntervalOnButtons: true,
 	typeBeforeReveal: false,
 	hintButtonSubtle: false,
+	sentenceFillBlanks: true,
+	tutorialsDone: [],
+	flashcardDecks: [],
 	dataFolderPath: 'SRS-Data',
 	blastSound: true,
 	blastDataFolderPath: '',
@@ -206,6 +218,18 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 		const { containerEl } = this;
 		this.remoteCleanup?.();
 		containerEl.empty();
+
+		new Setting(containerEl)
+			.setName('Tutorials')
+			.setDesc(
+				'Short hands-on lessons for reviewing, hints, reversed cards, typing answers, sentence cards, read aloud, the remote, and writing cards. Nothing in them is saved.',
+			)
+			.addButton((btn) =>
+				btn
+					.setButtonText('Open tutorials')
+					.setCta()
+					.onClick(() => this.plugin.openTutorials()),
+			);
 
 		new Setting(containerEl).setName('Data Storage Location').setHeading();
 
@@ -348,6 +372,37 @@ export class SpacedRepetitionSettingTab extends PluginSettingTab {
 							.split(',')
 							.map((t) => t.trim())
 							.filter((t) => t.length > 0);
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Sentence deck tags')
+			.setDesc(
+				'Comma-separated list of tags (e.g., #sentences). If a deck note contains one of these tags in addition to a flashcard tag, its cards are sentence cards for learning text word for word: the answer is shown with more and more words hidden, and words in **bold** or ==highlight== are anchor words that always stay visible. These decks are left out of the card games.',
+			)
+			.addText((text) =>
+				text
+					.setValue(this.plugin.settings.sentenceTags.join(', '))
+					.onChange(async (value) => {
+						this.plugin.settings.sentenceTags = value
+							.split(',')
+							.map((t) => t.trim())
+							.filter((t) => t.length > 0);
+						await this.plugin.saveSettings();
+					}),
+			);
+
+		new Setting(containerEl)
+			.setName('Type into sentence blanks')
+			.setDesc(
+				'In sentence cards, every hidden word becomes a small field: type the missing words and select check to see which ones you got right. On the answer side, the words you got wrong are marked as missed. Leave a field empty to just say the word aloud.',
+			)
+			.addToggle((toggle) =>
+				toggle
+					.setValue(this.plugin.settings.sentenceFillBlanks)
+					.onChange(async (value) => {
+						this.plugin.settings.sentenceFillBlanks = value;
 						await this.plugin.saveSettings();
 					}),
 			);

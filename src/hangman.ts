@@ -415,7 +415,8 @@ export class HangmanModal extends Modal {
 
 		await this.plugin.loadBlastData();
 		const all = (await this.plugin.scanAllCards()).filter(
-			(c) => buildPuzzle(c) !== null,
+			// כרטיסי משפטים ארוכים לא מתאימים למשחק
+			(c) => !c.sentence && buildPuzzle(c) !== null,
 		);
 		if (this.closed) return;
 

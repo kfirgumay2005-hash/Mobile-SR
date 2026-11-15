@@ -10,6 +10,7 @@ import {
 	setIcon,
 } from 'obsidian';
 import {
+	type DuplicateMode,
 	SpacedRepetitionSettings,
 	DEFAULT_SETTINGS,
 	SpacedRepetitionSettingTab,
@@ -36,6 +37,21 @@ import {
 import { Speaker } from './speech';
 import type { GameId } from './music';
 import { checkUnlockKey } from './rewards';
+import { TutorialMenuModal } from './tutorials';
+import {
+	SENTENCE_STAGES,
+	diffSentence,
+	hiddenAt,
+	letterCount,
+	normWord,
+	parseSentence,
+	randomOrder,
+	renderSentence,
+	sentenceWords,
+	withAnchor,
+	type SentenceToken,
+	type WordToken,
+} from './sentence';
 
 export const cleanStr = (s: string | undefined): string => {
 	if (s === undefined) return '';
@@ -106,6 +122,10 @@ export interface Flashcard {
 	// הרמז מלא רק בדק שיש בו תג #hint (ורק בכיוון הקדמי של הכרטיס)
 	firstLine: string;
 	hint: string;
+	// במדריך: כרטיס משפט שמוצג כאילו כבר נלמד (נפתח בשלב האחרון)
+	tutorialReviewed?: boolean;
+	// כרטיס משפט (דק עם תג #sentences): הגב נלמד מילה במילה, ראו sentence.ts
+	sentence: boolean;
 	lineStart: number;
 	lineEnd: number;
 	rawContent: string;
@@ -234,24 +254,57 @@ export class SRSEngine {
 // ============================================================================
 
 export class FlashcardParser {
+	// סוג הדק לפי התגים שבפתק
+	static deckFlags(
+		content: string,
+		validTags: string[],
+		hintTags: string[],
+		sentenceTags: string[],
+	): { isDeck: boolean; hint: boolean; sentence: boolean } {
+		return {
+			isDeck: validTags.some((tag) => content.includes(tag)),
+			// האם הדק הזה מוגדר כדק עם רמזים (תג #hint בנוסף ל-#flashcards)
+			hint: hintTags.some((tag) => hasTagToken(content, tag)),
+			// דק משפטים: אין כרטיס הפוך (?? נחשב כמו ?), כי שאלה של משפט שלם לא הגיונית
+			sentence: sentenceTags.some((tag) => hasTagToken(content, tag)),
+		};
+	}
+
 	static async parseFile(
 		file: TFile,
 		app: App,
 		validTags: string[],
 		hintTags: string[],
+		sentenceTags: string[] = [],
 	): Promise<Flashcard[]> {
 		const rawContent = await app.vault.read(file);
 		const content = rawContent.replace(/\r\n/g, '\n');
-		const lines = content.split('\n');
+		const flags = this.deckFlags(
+			content,
+			validTags,
+			hintTags,
+			sentenceTags,
+		);
+		if (!flags.isDeck) return [];
+		return this.parseText(
+			content,
+			file.path,
+			file.basename,
+			flags.hint,
+			flags.sentence,
+		);
+	}
+
+	// פירוק הכרטיסים מטקסט. גם המדריכים ומגרש הכתיבה משתמשים בזה, בלי קובץ
+	static parseText(
+		content: string,
+		filePath: string,
+		deckName: string,
+		hintEnabled: boolean,
+		sentence: boolean,
+	): Flashcard[] {
+		const lines = content.replace(/\r\n/g, '\n').split('\n');
 		const cardsMap = new Map<string, Flashcard>();
-
-		const hasTag = validTags.some((tag) => content.includes(tag));
-		if (!hasTag) return [];
-
-		// האם הדק הזה מוגדר כדק עם רמזים (תג #hint בנוסף ל-#flashcards)
-		const hintEnabled = hintTags.some((tag) => hasTagToken(content, tag));
-
-		const deckName = file.basename;
 
 		const isCardDelimiter = (line: string | undefined): boolean => {
 			if (line === undefined) return false;
@@ -264,7 +317,7 @@ export class FlashcardParser {
 			if (line === undefined) continue;
 
 			if (cleanStr(line) === '?' || cleanStr(line) === '??') {
-				const isReversed = cleanStr(line) === '??';
+				const isReversed = cleanStr(line) === '??' && !sentence;
 
 				let qStart = i - 1;
 				while (
@@ -303,17 +356,18 @@ export class FlashcardParser {
 
 					// ה-ID נשאר מחושב על התוכן המלא כמו קודם, כדי לא לאבד התקדמות קיימת
 					const idFwd = this.generateHash(
-						`${file.path}:multi:${qText}:${aText}`,
+						`${filePath}:multi:${qText}:${aText}`,
 					);
 					cardsMap.set(idFwd, {
 						id: idFwd,
-						filePath: file.path,
+						filePath: filePath,
 						deckName,
 						type: isReversed ? 'MultiLineReversed' : 'MultiLine',
 						front: qText,
 						back: aText,
 						firstLine: qFirstLine,
 						hint: qHint,
+						sentence,
 						lineStart: qStart,
 						lineEnd: aEnd,
 						rawContent: raw,
@@ -321,17 +375,18 @@ export class FlashcardParser {
 
 					if (isReversed) {
 						const idRev = this.generateHash(
-							`${file.path}:multi-rev:${qText}:${aText}`,
+							`${filePath}:multi-rev:${qText}:${aText}`,
 						);
 						cardsMap.set(idRev, {
 							id: idRev,
-							filePath: file.path,
+							filePath: filePath,
 							deckName,
 							type: 'MultiLineReversed',
 							front: aText,
 							back: qText,
 							firstLine: (aText.split('\n')[0] ?? '').trim(),
 							hint: '',
+							sentence: false,
 							lineStart: qStart,
 							lineEnd: aEnd,
 							rawContent: raw,
@@ -386,6 +441,37 @@ const REMOTE_RATINGS: Record<
 	easy: { value: 4, label: 'Easy' },
 };
 
+// review של תרגול (מדריכים): כרטיסים בזיכרון, ושום דבר לא נשמר
+export interface PracticeOptions {
+	// מדריך השלט: השלט פעיל גם כשכובה בהגדרות, וכל מחווה מוצגת בהודעה
+	remote?: boolean;
+	// מחייב תשובה מוקלדת, בלי קשר להגדרה
+	typeAnswer?: boolean;
+	// דק רמזים, כדי שכרטיס שנערך במדריך יפורק כמו בפתק אמיתי
+	hintDeck?: boolean;
+	// כפתור "More tutorials" במסך הסיום
+	onFinish?: () => void;
+	// נקרא פעם אחת כשכל הכרטיסים דורגו (המדריך הושלם)
+	onComplete?: () => void;
+	// מכריח (או מבטל) שדות הקלדה במקומות הריקים, בלי קשר להגדרה
+	fillBlanks?: boolean;
+}
+
+// מצב כרטיס המשפט המוצג: שלב ההסתרה, סדר ההסתרה האקראי והמילים שסומנו כ"שכחתי".
+// walk = כרטיס חדש שעובר את כל השלבים לפני חשיפת התשובה
+interface SentenceState {
+	card: Flashcard;
+	stage: number;
+	walk: boolean;
+	order: number[];
+	missed: Set<number>;
+	// המילים החסרות מההשוואה עם מה שהוקלד כבר סומנו
+	seeded: boolean;
+	// מה שהוקלד בכל מקום ריק (לפי מספר המילה), ותוצאת Check: true = נכון
+	fills: Map<number, string>;
+	marks: Map<number, boolean>;
+}
+
 export class ReviewModal extends Modal {
 	private plugin: SpacedRepetitionPlugin;
 	private queue: Flashcard[];
@@ -408,10 +494,19 @@ export class ReviewModal extends Modal {
 	private spokenKey: string = '';
 	// מה שהשלט עשה, נאמר לפני הכרטיס הבא
 	private announce: string = '';
-	// מדריך השלט: כרטיסים שנוצרו בזיכרון, ושום דירוג לא נשמר
+	// מדריך: כרטיסים שנוצרו בזיכרון, ושום דבר לא נשמר (לא דירוג ולא פתק)
 	private practice: boolean;
+	private opts: PracticeOptions;
 	// ציור שהתחיל אחרי ציור אחר מבטל אותו, כדי שלחיצות מהירות לא יכפילו את התצוגה
 	private renderToken: number = 0;
+	// כרטיס המשפט הנוכחי (ראו sentence.ts); נוצר מחדש כשעוברים לכרטיס אחר
+	private sent: SentenceState | null = null;
+	// "Make anchor" כותב לפתק ומשנה את ה-ID של הכרטיס; בזמן הזה לא מדרגים
+	private anchorBusy: boolean = false;
+	// המדריך כבר דווח כהושלם (onComplete)
+	private completed: boolean = false;
+	// false = דק משפטים שנבחר ללמוד ככרטיסים רגילים (ראו flashcardDecks בהגדרות)
+	private asSentences: boolean;
 	// צעדים קדימה, כדי ש-"כרטיס קודם" יוכל לחזור אחורה
 	private history: ReviewStep[] = [];
 	// כרטיסים שדורגו בסשן הזה ומה היה המצב שלהם לפני הדירוג,
@@ -426,13 +521,16 @@ export class ReviewModal extends Modal {
 		plugin: SpacedRepetitionPlugin,
 		queue: Flashcard[],
 		deckCards: Flashcard[],
-		practice: boolean = false,
+		practice: PracticeOptions | null = null,
+		asSentences: boolean = true,
 	) {
 		super(app);
+		this.asSentences = asSentences;
 		this.plugin = plugin;
 		this.queue = queue;
 		this.deckCards = deckCards;
-		this.practice = practice;
+		this.practice = practice !== null;
+		this.opts = practice ?? {};
 		this.component = new Component();
 	}
 
@@ -440,20 +538,16 @@ export class ReviewModal extends Modal {
 		this.component.load();
 		this.modalEl.addClass('srs-review-modal-wrapper');
 		// במדריך השלט פעיל תמיד, גם אם כובה בהגדרות
-		if (this.plugin.settings.remoteEnabled || this.practice) {
+		if (this.plugin.settings.remoteEnabled || this.opts.remote) {
 			this.remote = new RemoteInput({
 				settings: () => this.plugin.settings,
 				// במדריך גם הקשה לא מקושרת נתפסת, כדי להראות שהיא הגיעה
 				// הקשה באמצע הקלדה היא אצבע על המסך, ולא בקשה לרמז או להפוך את הכרטיס
 				wants: (g) =>
 					!this.isEditing &&
-					!(
-						isTapGesture(g) &&
-						this.mustType() &&
-						this.typedAnswer.trim() !== ''
-					) &&
+					!(isTapGesture(g) && this.isTyping()) &&
 					(remoteActionFor(this.plugin.settings, g) !== null ||
-						(this.practice && isTapGesture(g))),
+						(!!this.opts.remote && isTapGesture(g))),
 				onGesture: (g, info) => this.onRemoteGesture(g, info),
 			});
 			this.remote.attach(this.plugin);
@@ -508,19 +602,48 @@ export class ReviewModal extends Modal {
 
 	// האם הכרטיס הנוכחי מחכה לתשובה מוקלדת במקום לכפתור Show Answer
 	private mustType(): boolean {
-		return (
-			this.plugin.settings.typeBeforeReveal &&
-			!this.practice &&
-			!this.remoteInUse &&
-			!this.isAnswerShown
-		);
+		// במדריכים ההקלדה פעילה רק במדריך שלה
+		const on = this.practice
+			? !!this.opts.typeAnswer
+			: this.plugin.settings.typeBeforeReveal;
+		return on && !this.remoteInUse && !this.isAnswerShown;
+	}
+
+	// כרטיס משפט שמוצג כמשפט (ולא ככרטיס רגיל לפי הבחירה בדשבורד).
+	// card.sentence עצמו לא משתנה, כי עריכת כרטיס מפרקת אותו מחדש מהפתק
+	private isSent(card: Flashcard): boolean {
+		return card.sentence && this.asSentences;
+	}
+
+	// כרטיס משפט עם שדות במקומות הריקים (לא עם שלט, שאין לו מקלדת)
+	private fillsBlanks(card: Flashcard): boolean {
+		if (!this.isSent(card) || this.isAnswerShown || this.remoteInUse) {
+			return false;
+		}
+		const on =
+			this.opts.fillBlanks ?? this.plugin.settings.sentenceFillBlanks;
+		if (!on) return false;
+		const st = this.sentenceState(card);
+		const words = sentenceWords(parseSentence(card.back));
+		return hiddenAt(words, st.order, st.stage).size > 0;
+	}
+
+	// יש טקסט שהוקלד ועוד לא נשלח: הקשה היא אצבע על המסך, לא פקודה
+	private isTyping(): boolean {
+		if (this.mustType() && this.typedAnswer.trim() !== '') return true;
+		const card = this.queue[this.currentIndex];
+		if (!card || !this.fillsBlanks(card)) return false;
+		for (const v of this.sentenceState(card).fills.values()) {
+			if (v.trim() !== '') return true;
+		}
+		return false;
 	}
 
 	private onRemoteGesture(g: string, info: GestureInfo): void {
 		const action = remoteActionFor(this.plugin.settings, g);
 		if (this.isEditing) return;
 		if (!action) {
-			if (this.practice) {
+			if (this.opts.remote) {
 				new Notice(`${gestureLabel(g)}: not bound`, 1500);
 			}
 			return;
@@ -542,7 +665,7 @@ export class ReviewModal extends Modal {
 			this.announce = done;
 		}
 		// במדריך תמיד מראים גם איזו מחווה זוהתה
-		if (done && this.practice) {
+		if (done && this.opts.remote) {
 			new Notice(`${gestureLabel(g)}: ${done}`, 1500);
 		} else if (done && this.plugin.settings.remoteToast) {
 			new Notice(done, 1200);
@@ -570,11 +693,8 @@ export class ReviewModal extends Modal {
 		const card = this.queue[this.currentIndex];
 		if (!card) return null;
 
-		if (action === 'flip') {
-			this.isAnswerShown = !this.isAnswerShown;
-			void this.renderCurrentCard();
-			return this.isAnswerShown ? 'Answer shown' : 'Answer hidden';
-		}
+		if (action === 'flip') return this.advance(card);
+		if (action === 'more') return this.showMoreWords(card);
 		if (action === 'next') return this.skipCard(card);
 		if (action === 'hint') {
 			if (card.hint === '') {
@@ -599,6 +719,92 @@ export class ReviewModal extends Modal {
 		);
 		this.applyRating(card, nextMeta, rating.label);
 		return rating.label;
+	}
+
+	private sentenceState(card: Flashcard): SentenceState {
+		const count = sentenceWords(parseSentence(card.back)).length;
+		if (this.sent && this.sent.card === card) {
+			// אחרי עריכה שמשנה את מספר המילים, הסדר הישן כבר לא מתאים
+			if (this.sent.order.length !== count) {
+				this.sent.order = randomOrder(count);
+			}
+			return this.sent;
+		}
+		// כרטיס חדש עובר את כל השלבים; כרטיס שכבר נלמד נפתח ישר בשלב האחרון
+		const meta = this.metaBeforeRating(card);
+		const isNew =
+			!card.tutorialReviewed && (!meta || meta.repetition === 0);
+		this.sent = {
+			card,
+			stage: isNew ? 0 : SENTENCE_STAGES,
+			walk: isNew,
+			order: randomOrder(count),
+			missed: new Set(),
+			seeded: false,
+			fills: new Map(),
+			marks: new Map(),
+		};
+		return this.sent;
+	}
+
+	// השלב הבא (dir = 1) או הקודם (dir = -1) שמשנה את מה שמוסתר; null אם אין כזה
+	private stageStep(
+		card: Flashcard,
+		st: SentenceState,
+		dir: 1 | -1,
+	): number | null {
+		const words = sentenceWords(parseSentence(card.back));
+		const now = hiddenAt(words, st.order, st.stage).size;
+		for (
+			let stage = st.stage + dir;
+			stage >= 0 && stage <= SENTENCE_STAGES;
+			stage += dir
+		) {
+			if (hiddenAt(words, st.order, stage).size !== now) return stage;
+		}
+		return null;
+	}
+
+	// האם הפיכה תסתיר עוד מילים (כרטיס משפט חדש) במקום לחשוף את התשובה
+	private advancesStage(card: Flashcard): boolean {
+		if (!this.isSent(card) || this.isAnswerShown) return false;
+		const st = this.sentenceState(card);
+		return st.walk && this.stageStep(card, st, 1) !== null;
+	}
+
+	// הפיכה (כפתור או שלט). בכרטיס משפט חדש מסתירים קודם עוד מילים, ורק אחרי
+	// השלב האחרון התשובה נחשפת
+	private advance(card: Flashcard): string {
+		if (this.advancesStage(card)) {
+			const st = this.sentenceState(card);
+			st.stage = this.stageStep(card, st, 1) ?? SENTENCE_STAGES;
+			void this.renderCurrentCard();
+			return `Stage ${st.stage} of ${SENTENCE_STAGES}`;
+		}
+		this.isAnswerShown = !this.isAnswerShown;
+		void this.renderCurrentCard();
+		return this.isAnswerShown ? 'Answer shown' : 'Answer hidden';
+	}
+
+	// "Show more words": שלב אחד אחורה, כמו Show hint
+	private showMoreWords(card: Flashcard): string | null {
+		if (!this.isSent(card)) {
+			this.tell('This is not a sentence card.');
+			return null;
+		}
+		if (this.isAnswerShown) {
+			this.tell('The whole sentence is shown.');
+			return null;
+		}
+		const st = this.sentenceState(card);
+		const prev = this.stageStep(card, st, -1);
+		if (prev === null) {
+			this.tell('All words are shown.');
+			return null;
+		}
+		st.stage = prev;
+		void this.renderCurrentCard();
+		return 'More words shown';
 	}
 
 	// דילוג בלי דירוג: הכרטיס עובר לסוף התור (כרטיס שכבר דורג פשוט נשאר מאחור)
@@ -702,6 +908,39 @@ export class ReviewModal extends Modal {
 		// אחרי שהפעולה הנוכחית מסתיימת, כדי שההודעה (announce) כבר תהיה מוכנה
 		if (this.speaker) window.setTimeout(() => this.speakCurrent(), 0);
 
+		if (this.currentIndex >= this.queue.length && this.practice) {
+			// כל כרטיס דורג (דילוג רק מעביר לסוף התור), אז המדריך הושלם
+			if (!this.completed) {
+				this.completed = true;
+				this.opts.onComplete?.();
+			}
+			contentEl.createEl('h2', { text: '✨ Tutorial finished' });
+			if (this.opts.onComplete) {
+				contentEl
+					.createEl('p', { text: 'Completed ✓' })
+					.setCssStyles({ color: 'var(--text-success)' });
+			}
+			contentEl.createEl('p', {
+				text: 'Nothing from this tutorial was saved.',
+			});
+			const row = contentEl.createDiv();
+			row.setCssStyles({ display: 'flex', gap: '8px', flexWrap: 'wrap' });
+			const onFinish = this.opts.onFinish;
+			if (onFinish) {
+				const moreBtn = row.createEl('button', {
+					text: 'More tutorials',
+					cls: 'mod-cta',
+				});
+				moreBtn.onclick = () => {
+					this.close();
+					onFinish();
+				};
+			}
+			row.createEl('button', { text: 'Close' }).onclick = () =>
+				this.close();
+			return;
+		}
+
 		if (this.currentIndex >= this.queue.length) {
 			contentEl.createEl('h2', { text: '✨ Deck Completed!' });
 			contentEl.createEl('p', {
@@ -748,16 +987,14 @@ export class ReviewModal extends Modal {
 
 		this.renderMuteButton(headerActions);
 
-		// לכרטיסי המדריך אין קובץ, אז אין מה לערוך
-		if (!this.practice) {
-			const editBtn = headerActions.createEl('button', {
-				text: this.isEditing ? 'Cancel Edit' : 'Edit Card',
-			});
-			editBtn.onclick = () => {
-				this.isEditing = !this.isEditing;
-				void this.renderCurrentCard();
-			};
-		}
+		// בכרטיסי המדריך העריכה נשארת בזיכרון (ראו saveCardModification)
+		const editBtn = headerActions.createEl('button', {
+			text: this.isEditing ? 'Cancel Edit' : 'Edit Card',
+		});
+		editBtn.onclick = () => {
+			this.isEditing = !this.isEditing;
+			void this.renderCurrentCard();
+		};
 
 		const bodyEl = contentEl.createDiv({ cls: 'srs-card-body' });
 		bodyEl.setCssStyles({
@@ -821,7 +1058,35 @@ export class ReviewModal extends Modal {
 			if (token !== this.renderToken) return;
 		}
 
-		if (this.isAnswerShown) {
+		if (this.isSent(card) && !this.isAnswerShown) {
+			bodyEl.createEl('hr');
+			const st = this.sentenceState(card);
+			const tokens = parseSentence(card.back);
+			const stageLabel = bodyEl.createDiv({
+				text:
+					st.stage === 0
+						? 'Full sentence'
+						: st.stage >= SENTENCE_STAGES
+							? `Stage ${SENTENCE_STAGES} of ${SENTENCE_STAGES}: anchor words only`
+							: `Stage ${st.stage} of ${SENTENCE_STAGES}`,
+			});
+			stageLabel.setCssStyles({
+				fontSize: '0.8em',
+				opacity: '0.7',
+				marginBottom: '0.25em',
+			});
+			const blank = hiddenAt(sentenceWords(tokens), st.order, st.stage);
+			if (this.fillsBlanks(card)) {
+				this.renderBlankFields(bodyEl, tokens, blank, st);
+			} else {
+				renderSentence(bodyEl, tokens, { blank });
+			}
+		}
+
+		if (this.isAnswerShown && this.isSent(card)) {
+			bodyEl.createEl('hr');
+			this.renderSentenceAnswer(bodyEl, card);
+		} else if (this.isAnswerShown) {
 			bodyEl.createEl('hr');
 			if (this.typedAnswer.trim() !== '') {
 				const typedWrap = bodyEl.createDiv({ cls: 'srs-typed-answer' });
@@ -864,6 +1129,22 @@ export class ReviewModal extends Modal {
 		bottomBar.setCssStyles({ marginTop: '1.5em' });
 
 		if (!this.isAnswerShown) {
+			if (this.isSent(card)) {
+				const st = this.sentenceState(card);
+				if (this.stageStep(card, st, -1) !== null) {
+					const moreBtn = bottomBar.createEl('button', {
+						text: 'Show more words',
+					});
+					moreBtn.setCssStyles({
+						width: '100%',
+						marginBottom: '8px',
+					});
+					moreBtn.onclick = () => {
+						this.showMoreWords(card);
+					};
+				}
+			}
+
 			if (hasHint && !this.isHintShown) {
 				const subtle = this.plugin.settings.hintButtonSubtle;
 				const hintBtn = bottomBar.createEl('button', {
@@ -892,8 +1173,23 @@ export class ReviewModal extends Modal {
 				};
 			}
 
-			if (this.mustType()) {
-				this.renderAnswerField(bottomBar);
+			if (this.advancesStage(card)) {
+				// כרטיס משפט חדש: אותו כפתור כמו Show Answer, אבל מסתיר עוד מילים
+				const nextBtn = bottomBar.createEl('button', {
+					text: 'Hide more words',
+					cls: 'mod-cta',
+				});
+				nextBtn.setCssStyles({ width: '100%' });
+				nextBtn.onclick = () => {
+					this.advance(card);
+				};
+			} else if (this.mustType() && !this.fillsBlanks(card)) {
+				this.renderAnswerField(
+					bottomBar,
+					this.isSent(card)
+						? 'Type the whole sentence'
+						: 'Type your answer',
+				);
 			} else {
 				const showBtn = bottomBar.createEl('button', {
 					text: 'Show Answer',
@@ -901,8 +1197,7 @@ export class ReviewModal extends Modal {
 				});
 				showBtn.setCssStyles({ width: '100%' });
 				showBtn.onclick = () => {
-					this.isAnswerShown = true;
-					void this.renderCurrentCard();
+					this.advance(card);
 				};
 			}
 		} else {
@@ -962,9 +1257,9 @@ export class ReviewModal extends Modal {
 	}
 
 	// שדה התשובה: הגב נחשף רק אחרי שליחה של טקסט לא ריק
-	private renderAnswerField(parent: HTMLElement): void {
+	private renderAnswerField(parent: HTMLElement, placeholder: string): void {
 		const field = parent.createEl('textarea', {
-			attr: { dir: 'auto', rows: '2', placeholder: 'Type your answer' },
+			attr: { dir: 'auto', rows: '2', placeholder },
 		});
 		field.value = this.typedAnswer;
 		field.setCssStyles({
@@ -1002,12 +1297,344 @@ export class ReviewModal extends Modal {
 		field.setSelectionRange(field.value.length, field.value.length);
 	}
 
+	// שדה הקלדה בכל מקום ריק, וכפתור Check שצובע כל שדה בירוק או באדום.
+	// הקלדה לא מציירת את הכרטיס מחדש, כדי שהפוקוס והמקלדת לא ייעלמו
+	private renderBlankFields(
+		parent: HTMLElement,
+		tokens: SentenceToken[],
+		blank: Set<number>,
+		st: SentenceState,
+	): void {
+		type Field = { w: number; core: string; input: HTMLInputElement };
+		const fields: Field[] = [];
+		const paintField = (f: Field): void => {
+			const mark = st.marks.get(f.w);
+			const color =
+				mark === true
+					? 'var(--text-success)'
+					: mark === false
+						? 'var(--text-error)'
+						: '';
+			f.input.setCssStyles({
+				borderBottomColor: color || 'var(--text-faint)',
+				color: color || 'var(--text-normal)',
+			});
+		};
+		const filled = (f: Field): boolean =>
+			(st.fills.get(f.w) ?? '').trim() !== '';
+
+		const row = createDiv();
+		const checkBtn = row.createEl('button', { text: 'Check' });
+		const result = row.createSpan();
+		const refresh = (): void => {
+			checkBtn.disabled = !fields.some(filled);
+			result.empty();
+			const checked = fields.filter((f) => st.marks.has(f.w));
+			if (checked.length === 0) return;
+			const right = checked.filter((f) => st.marks.get(f.w)).length;
+			if (right === fields.length) {
+				result.createSpan({ text: 'All right ✓' }).setCssStyles({
+					color: 'var(--text-success)',
+					fontWeight: 'bold',
+				});
+				return;
+			}
+			result.setText(`${right} of ${fields.length} right`);
+		};
+		const check = (): void => {
+			for (const f of fields) {
+				const v = (st.fills.get(f.w) ?? '').trim();
+				if (v === '') st.marks.delete(f.w);
+				else st.marks.set(f.w, normWord(v) === normWord(f.core));
+				paintField(f);
+			}
+			refresh();
+			// השדה השגוי הראשון מקבל פוקוס, כדי לתקן אותו מיד
+			const wrong = fields.find((f) => st.marks.get(f.w) === false);
+			if (wrong) {
+				wrong.input.focus();
+				wrong.input.select();
+			}
+		};
+
+		renderSentence(parent, tokens, {
+			blank,
+			makeBlank: (line, word) => {
+				const input = line.createEl('input', {
+					type: 'text',
+					cls: 'srs-sentence-field',
+					attr: {
+						dir: 'auto',
+						autocomplete: 'off',
+						autocorrect: 'off',
+						autocapitalize: 'off',
+						spellcheck: 'false',
+						enterkeyhint: 'next',
+						'aria-label': 'Missing word',
+					},
+				});
+				input.value = st.fills.get(word.w) ?? '';
+				input.setCssStyles({
+					width: `${Math.max(3, letterCount(word.core)) * 0.65 + 0.8}em`,
+					height: '1.6em',
+					padding: '0 0.2em',
+					margin: '0 0.1em',
+					border: 'none',
+					borderBottom: '2px solid var(--text-faint)',
+					borderRadius: '4px 4px 0 0',
+					background: 'var(--background-modifier-form-field)',
+					boxShadow: 'none',
+					fontSize: 'inherit',
+					textAlign: 'center',
+					verticalAlign: 'baseline',
+				});
+				const f: Field = { w: word.w, core: word.core, input };
+				fields.push(f);
+				paintField(f);
+				input.oninput = () => {
+					st.fills.set(word.w, input.value);
+					st.marks.delete(word.w);
+					paintField(f);
+					refresh();
+				};
+				// Enter עובר לשדה הבא, ובשדה האחרון בודק
+				input.onkeydown = (e) => {
+					if (e.key !== 'Enter' || e.isComposing) return;
+					e.preventDefault();
+					const next = fields[fields.indexOf(f) + 1];
+					if (next) next.input.focus();
+					else check();
+				};
+			},
+		});
+
+		parent.appendChild(row);
+		row.setCssStyles({
+			display: 'flex',
+			alignItems: 'center',
+			flexWrap: 'wrap',
+			gap: '8px',
+			marginTop: '0.5em',
+		});
+		result.setCssStyles({ fontSize: '0.9em' });
+		checkBtn.onclick = check;
+		refresh();
+	}
+
+	// צד התשובה של כרטיס משפט: המשפט המלא, המילים שהיו מוסתרות מסומנות, והשוואה למה
+	// שהוקלד. הקשה על מילה מסמנת שהיא נשכחה; מילה שנשכחה אפשר להפוך לעוגן בפתק עצמו
+	private renderSentenceAnswer(parent: HTMLElement, card: Flashcard): void {
+		const st = this.sentenceState(card);
+		const tokens = parseSentence(card.back);
+		const words = sentenceWords(tokens);
+		const wasHidden = hiddenAt(words, st.order, st.stage);
+		const typed = this.typedAnswer.trim();
+		const diff = typed !== '' ? diffSentence(words, typed) : null;
+		if (diff && !st.seeded) {
+			st.missed = new Set(diff.missing);
+			st.seeded = true;
+		}
+		// מה שהוקלד במקומות הריקים: רק מילה שהוקלדה לא נכון נחשבת "שכחתי".
+		// שדה ריק לא נספר, כי אפשר גם להגיד את המילה בקול
+		const fillOf = (w: number): string => (st.fills.get(w) ?? '').trim();
+		const filled = diff
+			? []
+			: words.filter((x) => wasHidden.has(x.w) && fillOf(x.w) !== '');
+		const wrongFills = filled.filter(
+			(x) => normWord(fillOf(x.w)) !== normWord(x.core),
+		);
+		if (filled.length > 0 && !st.seeded) {
+			st.missed = new Set(wrongFills.map((x) => x.w));
+			st.seeded = true;
+		}
+
+		const small = (el: HTMLElement): void =>
+			el.setCssStyles({
+				fontSize: '0.8em',
+				opacity: '0.7',
+				marginBottom: '0.25em',
+			});
+
+		if (diff) {
+			const typedWrap = parent.createDiv({ cls: 'srs-typed-answer' });
+			typedWrap.setCssStyles({ marginBottom: '0.75em' });
+			small(typedWrap.createDiv({ text: 'Your answer' }));
+			const typedEl = typedWrap.createDiv({ attr: { dir: 'auto' } });
+			typedEl.setCssStyles({ whiteSpace: 'pre-wrap', lineHeight: '1.8' });
+			let wrong = 0;
+			for (const part of diff.typed) {
+				if (part.ok) {
+					typedEl.appendText(part.text);
+					continue;
+				}
+				wrong++;
+				typedEl.createSpan({ text: part.text }).setCssStyles({
+					color: 'var(--text-warning)',
+					textDecoration: 'line-through',
+				});
+			}
+			const summary = typedWrap.createDiv();
+			summary.setCssStyles({ fontSize: '0.85em', marginTop: '0.25em' });
+			if (diff.missing.size === 0 && wrong === 0) {
+				summary.createSpan({ text: 'Word for word ✓' }).setCssStyles({
+					color: 'var(--text-success)',
+				});
+			} else {
+				summary
+					.createSpan({ text: `${diff.missing.size} missing` })
+					.setCssStyles({ color: 'var(--text-error)' });
+				summary.appendText(' · ');
+				summary
+					.createSpan({ text: `${wrong} wrong or extra` })
+					.setCssStyles({ color: 'var(--text-warning)' });
+			}
+		}
+
+		if (filled.length > 0) {
+			const fillWrap = parent.createDiv({ cls: 'srs-typed-answer' });
+			fillWrap.setCssStyles({ marginBottom: '0.75em' });
+			small(fillWrap.createDiv({ text: 'Your blanks' }));
+			const summary = fillWrap.createDiv();
+			const right = filled.length - wrongFills.length;
+			if (wrongFills.length === 0) {
+				summary
+					.createSpan({
+						text: `${right} of ${filled.length} right ✓`,
+					})
+					.setCssStyles({ color: 'var(--text-success)' });
+			} else {
+				summary.setText(`${right} of ${filled.length} right`);
+			}
+			// לכל מילה שגויה: מה שהוקלד (מחוק) והמילה הנכונה
+			const list = fillWrap.createDiv();
+			list.setCssStyles({
+				display: 'flex',
+				flexWrap: 'wrap',
+				gap: '4px 12px',
+				marginTop: '0.25em',
+			});
+			for (const x of wrongFills) {
+				const item = list.createSpan();
+				item.createSpan({
+					text: fillOf(x.w),
+					attr: { dir: 'auto' },
+				}).setCssStyles({
+					color: 'var(--text-warning)',
+					textDecoration: 'line-through',
+				});
+				item.appendText(' → ');
+				item.createSpan({
+					text: x.core,
+					attr: { dir: 'auto' },
+				}).setCssStyles({ color: 'var(--text-error)' });
+			}
+		}
+
+		small(
+			parent.createDiv({
+				text:
+					diff || filled.length > 0
+						? 'Highlighted words were hidden. Red words are the ones you got wrong; tap a word to change its mark.'
+						: 'Highlighted words were hidden. Tap the words you missed.',
+			}),
+		);
+
+		// רק החלק הזה מצויר מחדש בהקשה, כדי שהחלון לא יקפוץ לראש הדף
+		const area = parent.createDiv();
+		const paint = (): void => {
+			area.empty();
+			renderSentence(area, tokens, {
+				wasHidden,
+				missed: st.missed,
+				onTap: (w) => {
+					if (st.missed.has(w)) st.missed.delete(w);
+					else st.missed.add(w);
+					paint();
+				},
+			});
+
+			// במדריך העוגן נוסף בזיכרון בלבד (ראו makeAnchor)
+			if (!this.practice && !card.filePath) return;
+			const missed = words.filter((x) => st.missed.has(x.w) && !x.anchor);
+			if (missed.length === 0) return;
+			const anchors = area.createDiv();
+			anchors.setCssStyles({ marginTop: '0.75em' });
+			small(
+				anchors.createDiv({
+					text: 'Make anchor: the word is made bold in the note and always stays visible.',
+				}),
+			);
+			const chips = anchors.createDiv();
+			chips.setCssStyles({
+				display: 'flex',
+				flexWrap: 'wrap',
+				gap: '6px',
+			});
+			for (const word of missed) {
+				const chip = chips.createEl('button');
+				chip.setCssStyles({ minHeight: '36px' });
+				chip.createSpan({ text: '★ ' });
+				// המילה בתוך אלמנט משלה, כדי שמילה בעברית לא תשנה את סדר הכפתור
+				chip.createSpan({ text: word.core, attr: { dir: 'auto' } });
+				chip.setAttr('aria-label', 'Make anchor');
+				chip.onclick = () => {
+					chip.disabled = true;
+					void this.makeAnchor(card, word);
+				};
+			}
+		};
+		paint();
+	}
+
+	// עוטף את המילה ב-** בפתק. הפתק הוא מקור האמת: אין מצב נסתר מחוץ לו
+	private async makeAnchor(card: Flashcard, word: WordToken): Promise<void> {
+		if (this.anchorBusy) return;
+		const raw = card.rawContent;
+		const at = raw.lastIndexOf(card.back);
+		if (at < 0 || card.back.slice(word.start, word.end) !== word.core) {
+			new Notice(
+				'Could not find this word in the note. Edit the card instead.',
+			);
+			return;
+		}
+		const newRaw =
+			raw.slice(0, at) +
+			withAnchor(card.back, word) +
+			raw.slice(at + card.back.length);
+		if (this.practice) {
+			card.back = withAnchor(card.back, word);
+			card.rawContent = newRaw;
+			new Notice(
+				'Anchor added. In a real deck the word is made bold in the note.',
+			);
+			void this.renderCurrentCard();
+			return;
+		}
+		this.anchorBusy = true;
+		try {
+			await this.saveCardModification(
+				card,
+				newRaw,
+				'Anchor word added to the note.',
+			);
+		} finally {
+			this.anchorBusy = false;
+		}
+		if (this.queue[this.currentIndex] === card) {
+			void this.renderCurrentCard();
+		}
+	}
+
 	// הכרטיס הבא מוצג מיד, והכתיבה לקובץ רצה ברקע (היא עלולה לקחת זמן בטלפון)
 	private applyRating(
 		card: Flashcard,
 		nextMeta: CardSchedulingMetadata,
 		label: string,
 	): void {
+		if (this.anchorBusy) {
+			new Notice('Saving the note. Rate again in a moment.', 1500);
+			return;
+		}
 		const prev = this.metaBeforeRating(card);
 		const reviewedAt = Date.now();
 
@@ -1041,7 +1668,33 @@ export class ReviewModal extends Modal {
 	private async saveCardModification(
 		card: Flashcard,
 		newContent: string,
+		doneMessage: string = 'Card edited and saved successfully.',
 	): Promise<void> {
+		// במדריך אין פתק: הכרטיס מתעדכן בזיכרון בלבד, באותו פירוק כמו בפתק אמיתי
+		if (this.practice) {
+			const updated = FlashcardParser.parseText(
+				newContent,
+				'',
+				card.deckName,
+				!!this.opts.hintDeck,
+				card.sentence,
+			)[0];
+			if (!updated) {
+				new Notice(
+					'That text has no card in it. Keep a line that holds only a question mark between the question and the answer.',
+				);
+				return;
+			}
+			Object.assign(card, {
+				...updated,
+				id: card.id,
+				tutorialReviewed: card.tutorialReviewed,
+			});
+			new Notice(
+				'Changed in this tutorial only. In a real deck the note is updated.',
+			);
+			return;
+		}
 		const file = this.app.vault.getAbstractFileByPath(card.filePath);
 		if (!(file instanceof TFile)) return;
 
@@ -1080,6 +1733,7 @@ export class ReviewModal extends Modal {
 				this.app,
 				settings.flashcardTags,
 				settings.hintTags,
+				settings.sentenceTags,
 			);
 			return parsed.filter((c) => c.lineStart === blockStart);
 		};
@@ -1123,7 +1777,7 @@ export class ReviewModal extends Modal {
 			card.lineEnd = blockStart + newContent.split('\n').length - 1;
 		}
 
-		new Notice('Card edited and saved successfully.');
+		new Notice(doneMessage);
 	}
 }
 
@@ -1261,6 +1915,10 @@ export class DashboardModal extends Modal {
 					})
 					.setCssStyles({ fontSize: '0.85em', opacity: '0.8' });
 
+				// דק משפטים: בחירה אם ללמוד כמשפטים או ככרטיסים רגילים. הבחירה נשמרת לכל דק
+				const isSentenceDeck = stats.all.some((c) => c.sentence);
+				if (isSentenceDeck) this.renderModePicker(infoDiv, deckName);
+
 				const startBtn = deckCard.createEl('button', {
 					text: 'Start',
 					cls: 'mod-cta',
@@ -1275,6 +1933,8 @@ export class DashboardModal extends Modal {
 						this.plugin,
 						stats.due,
 						stats.all,
+						null,
+						!this.plugin.studiesAsFlashcards(deckName),
 					).open();
 				};
 			}
@@ -1329,8 +1989,61 @@ export class DashboardModal extends Modal {
 		this.renderGames(contentEl);
 	}
 
+	// שני כפתורים קטנים: Sentences / Flashcards. הלחוץ מודגש
+	private renderModePicker(parent: HTMLElement, deckName: string): void {
+		const row = parent.createDiv();
+		row.setCssStyles({ display: 'flex', gap: '4px', marginTop: '6px' });
+		const make = (label: string, flash: boolean): HTMLButtonElement => {
+			const btn = row.createEl('button', { text: label });
+			btn.setCssStyles({
+				fontSize: '0.75em',
+				padding: '2px 8px',
+				height: 'auto',
+			});
+			btn.onclick = () => {
+				this.plugin.setStudyAsFlashcards(deckName, flash);
+				paint();
+			};
+			return btn;
+		};
+		const sent = make('Sentences', false);
+		const flash = make('Flashcards', true);
+		const paint = (): void => {
+			const asFlash = this.plugin.studiesAsFlashcards(deckName);
+			sent.toggleClass('mod-cta', !asFlash);
+			flash.toggleClass('mod-cta', asFlash);
+			sent.setAttr('aria-pressed', String(!asFlash));
+			flash.setAttr('aria-pressed', String(asFlash));
+		};
+		paint();
+	}
+
 	// קטגוריית משחקים בתחתית הדשבורד (משחקי עזר בלבד)
 	private renderGames(parent: HTMLElement): void {
+		// מדריכים אינטראקטיביים לכל מה שאינו משחק
+		parent.createEl('hr');
+		const learn = parent.createDiv();
+		learn.setCssStyles({
+			border: '1px solid var(--background-modifier-border)',
+			padding: '12px',
+			borderRadius: '8px',
+			display: 'flex',
+			justifyContent: 'space-between',
+			alignItems: 'center',
+			gap: '8px',
+		});
+		const learnInfo = learn.createDiv();
+		learnInfo.createEl('strong', { text: '📘 Tutorials' });
+		learnInfo
+			.createDiv({
+				text: 'Short hands-on lessons for every feature. Nothing in them is saved.',
+			})
+			.setCssStyles({ fontSize: '0.85em', opacity: '0.8' });
+		learn.createEl('button', { text: 'Open' }).onclick = () => {
+			this.close();
+			this.plugin.openTutorials();
+		};
+
 		parent.createEl('hr');
 		parent.createEl('h2', { text: 'Games' });
 
@@ -1526,6 +2239,97 @@ export class DashboardModal extends Modal {
 	}
 }
 
+// סידור רווחים והסרת כפילויות בטקסט של דק. הכרטיס הראשון מבין כפילויות תמיד נשאר
+export function fixCardsText(
+	content: string,
+	mode: DuplicateMode,
+): { text: string; duplicatesCount: number } {
+	const lines = content.replace(/\r\n/g, '\n').split('\n');
+
+	const dashGroups: string[][] = [];
+	let currentGroup: string[] = [];
+
+	for (let i = 0; i < lines.length; i++) {
+		const line = lines[i];
+		if (line === undefined) continue;
+
+		if (cleanStr(line) === '-') {
+			dashGroups.push(currentGroup);
+			currentGroup = [];
+		} else {
+			currentGroup.push(line);
+		}
+	}
+	dashGroups.push(currentGroup);
+
+	const seenKeys = new Set<string>();
+	let duplicatesCount = 0;
+	const outLines: string[] = [];
+
+	for (let i = 0; i < dashGroups.length; i++) {
+		const group = dashGroups[i];
+		if (!group) continue;
+
+		let delimiter = '';
+		let delimiterIdx = -1;
+
+		for (let j = 0; j < group.length; j++) {
+			const trimmed = cleanStr(group[j]);
+			if (trimmed === '?' || trimmed === '??') {
+				delimiter = trimmed;
+				delimiterIdx = j;
+				break;
+			}
+		}
+
+		if (delimiterIdx !== -1) {
+			const frontLines = group.slice(0, delimiterIdx);
+			const backLines = group.slice(delimiterIdx + 1);
+
+			const frontKeys = frontLines
+				.map(normalizeForCompare)
+				.filter((l) => l !== '');
+			const backKeys = backLines
+				.map(normalizeForCompare)
+				.filter((l) => l !== '');
+
+			// מפתח ההשוואה:
+			// firstLine - רק השורה הראשונה של הכרטיס (בין המקף הפותח לשורה השנייה),
+			//             כך ששני כרטיסים עם אותה שורה ראשונה אך רמז/תשובה שונים נחשבים כפילות
+			// exact     - כל תוכן הכרטיס (שאלה + רמז + סוג המפריד + תשובה)
+			let key = '';
+			if (mode === 'firstLine') {
+				key = frontKeys[0] ?? '';
+			} else if (frontKeys.length > 0 || backKeys.length > 0) {
+				key = `${frontKeys.join('\n')}\u0001${delimiter}\u0001${backKeys.join('\n')}`;
+			}
+
+			if (key !== '' && seenKeys.has(key)) {
+				duplicatesCount++;
+				continue;
+			}
+
+			if (key !== '') {
+				seenKeys.add(key);
+			}
+
+			const cleanedFront = frontLines.filter((l) => cleanStr(l) !== '');
+			const cleanedBack = backLines.filter((l) => cleanStr(l) !== '');
+
+			if (i > 0) outLines.push('-');
+
+			outLines.push(...cleanedFront);
+			outLines.push(delimiter);
+			outLines.push(...cleanedBack);
+		} else {
+			if (i > 0) outLines.push('-');
+			outLines.push(...group);
+		}
+	}
+
+	return { text: outLines.join('\n'), duplicatesCount };
+}
+
 // ============================================================================
 // 5. Main Plugin Entrypoint
 // ============================================================================
@@ -1629,6 +2433,12 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		});
 
 		this.addCommand({
+			id: 'open-tutorials',
+			name: 'Open tutorials',
+			callback: () => this.openTutorials(),
+		});
+
+		this.addCommand({
 			id: 'open-remote-tutorial',
 			name: 'Remote: start tutorial',
 			callback: () => this.openRemoteTutorial(),
@@ -1654,9 +2464,40 @@ export default class SpacedRepetitionPlugin extends Plugin {
 	}
 
 	// מדריך השלט: review אמיתי על דק שנוצר בזיכרון, בלי קובץ ובלי שמירת דירוגים
-	public openRemoteTutorial(): void {
+	public openRemoteTutorial(onFinish?: () => void): void {
 		const cards = buildRemoteTutorialCards(this.settings);
-		new ReviewModal(this.app, this, [...cards], cards, true).open();
+		new ReviewModal(this.app, this, [...cards], cards, {
+			remote: true,
+			onFinish,
+			onComplete: () => this.markTutorialDone('remote'),
+		}).open();
+	}
+
+	// דק משפטים שהמשתמש בחר ללמוד ככרטיסים רגילים (לפי שם הדק)
+	public studiesAsFlashcards(deckName: string): boolean {
+		return (this.settings.flashcardDecks ?? []).includes(deckName);
+	}
+
+	public setStudyAsFlashcards(deckName: string, on: boolean): void {
+		const rest = (this.settings.flashcardDecks ?? []).filter(
+			(d) => d !== deckName,
+		);
+		// מערך חדש, כדי לא לשנות את המערך של DEFAULT_SETTINGS
+		this.settings.flashcardDecks = on ? [...rest, deckName] : rest;
+		void this.saveSettings();
+	}
+
+	// מדריך שהושלם עד הסוף. נשמר ב-data.json בלבד, ולא נוגע בלוח הזמנים
+	public markTutorialDone(id: string): void {
+		const done = this.settings.tutorialsDone ?? [];
+		if (done.includes(id)) return;
+		// מערך חדש, כדי לא לשנות את המערך של DEFAULT_SETTINGS
+		this.settings.tutorialsDone = [...done, id];
+		void this.saveSettings();
+	}
+
+	public openTutorials(): void {
+		new TutorialMenuModal(this.app, this).open();
 	}
 
 	public getDataFilePath(): string {
@@ -1781,6 +2622,7 @@ export default class SpacedRepetitionPlugin extends Plugin {
 				this.app,
 				this.settings.flashcardTags,
 				this.settings.hintTags,
+				this.settings.sentenceTags,
 			);
 			allCards.push(...cards);
 		}
@@ -2080,94 +2922,11 @@ export default class SpacedRepetitionPlugin extends Plugin {
 		}
 
 		const mode = this.settings.duplicateMode;
-
 		const content = await this.app.vault.read(file);
-		const lines = content.replace(/\r\n/g, '\n').split('\n');
-
-		const dashGroups: string[][] = [];
-		let currentGroup: string[] = [];
-
-		for (let i = 0; i < lines.length; i++) {
-			const line = lines[i];
-			if (line === undefined) continue;
-
-			if (cleanStr(line) === '-') {
-				dashGroups.push(currentGroup);
-				currentGroup = [];
-			} else {
-				currentGroup.push(line);
-			}
-		}
-		dashGroups.push(currentGroup);
-
-		const seenKeys = new Set<string>();
-		let duplicatesCount = 0;
-		const outLines: string[] = [];
-
-		for (let i = 0; i < dashGroups.length; i++) {
-			const group = dashGroups[i];
-			if (!group) continue;
-
-			let delimiter = '';
-			let delimiterIdx = -1;
-
-			for (let j = 0; j < group.length; j++) {
-				const trimmed = cleanStr(group[j]);
-				if (trimmed === '?' || trimmed === '??') {
-					delimiter = trimmed;
-					delimiterIdx = j;
-					break;
-				}
-			}
-
-			if (delimiterIdx !== -1) {
-				const frontLines = group.slice(0, delimiterIdx);
-				const backLines = group.slice(delimiterIdx + 1);
-
-				const frontKeys = frontLines
-					.map(normalizeForCompare)
-					.filter((l) => l !== '');
-				const backKeys = backLines
-					.map(normalizeForCompare)
-					.filter((l) => l !== '');
-
-				// מפתח ההשוואה:
-				// firstLine - רק השורה הראשונה של הכרטיס (בין המקף הפותח לשורה השנייה),
-				//             כך ששני כרטיסים עם אותה שורה ראשונה אך רמז/תשובה שונים נחשבים כפילות
-				// exact     - כל תוכן הכרטיס (שאלה + רמז + סוג המפריד + תשובה)
-				let key = '';
-				if (mode === 'firstLine') {
-					key = frontKeys[0] ?? '';
-				} else if (frontKeys.length > 0 || backKeys.length > 0) {
-					key = `${frontKeys.join('\n')}\u0001${delimiter}\u0001${backKeys.join('\n')}`;
-				}
-
-				if (key !== '' && seenKeys.has(key)) {
-					duplicatesCount++;
-					continue;
-				}
-
-				if (key !== '') {
-					seenKeys.add(key);
-				}
-
-				const cleanedFront = frontLines.filter(
-					(l) => cleanStr(l) !== '',
-				);
-				const cleanedBack = backLines.filter((l) => cleanStr(l) !== '');
-
-				if (i > 0) outLines.push('-');
-
-				outLines.push(...cleanedFront);
-				outLines.push(delimiter);
-				outLines.push(...cleanedBack);
-			} else {
-				if (i > 0) outLines.push('-');
-				outLines.push(...group);
-			}
-		}
-
-		const finalContent = outLines.join('\n');
+		const { text: finalContent, duplicatesCount } = fixCardsText(
+			content,
+			mode,
+		);
 		await this.app.vault.modify(file, finalContent);
 
 		const modeLabel =
